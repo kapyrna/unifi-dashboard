@@ -158,11 +158,6 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const num = (v) => (Number.isFinite(+v) ? +v : 0);
 const has = (v) => v !== null && v !== undefined && Number.isFinite(+v);
-function fmtRate(bytesPerSec) {
-  const u = ["bps", "kbps", "Mbps", "Gbps"]; let i = 0; let n = num(bytesPerSec) * 8;
-  while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
-  return `${i === 0 || n >= 100 ? n.toFixed(0) : n.toFixed(1)} ${u[i]}`;
-}
 function fmtBytes(n) {
   const u = ["B", "kB", "MB", "GB", "TB", "PB"]; let i = 0; n = num(n);
   while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
@@ -304,6 +299,7 @@ function hostName(h) {
   return r.name || r.hostname || h.userData?.name || h.ipAddress || h.id;
 }
 const KBPS_TO_BYTES = 125; // kbit/s -> bytes/s
+const SAMPLE_SEC = 300, SAMPLES_24H = 288; // ISP metrics are 5-minute samples
 
 // ---------- reverse DNS for destination IPs (DNS over HTTPS) ----------
 const DOH = "https://cloudflare-dns.com/dns-query";
@@ -401,7 +397,6 @@ async function loadModels() {
       isp: st.ispInfo?.name || "", counts: st.counts || {}, issues: st.internetIssues || [],
       wanUptime: st.percentages?.wanUptime, wan: w,
       health: siteHealth(st), wanStatus: combineWan(wanHealth(st, w), wans),
-      down: w ? num(w.download_kbps) * KBPS_TO_BYTES : 0, up: w ? num(w.upload_kbps) * KBPS_TO_BYTES : 0,
       wans, clients, flows,
     };
   }));
@@ -499,9 +494,10 @@ function render() {
   const avg = (a) => a.reduce((x, y) => x + +y, 0) / a.length;
 
   // traffic
-  const down = sum((m) => m.down), up = sum((m) => m.up);
+  // Total traffic is a quantity: each 5-minute sample's average rate times its length, summed over 24 h.
   const s = state.series;
-  const peakDown = s.length ? Math.max(...s.map((x) => x.down)) : 0;
+  const downBytes = s.reduce((a, x) => a + x.down, 0) * SAMPLE_SEC, upBytes = s.reduce((a, x) => a + x.up, 0) * SAMPLE_SEC;
+  const partial = s.length && s.length < SAMPLES_24H * 0.9 ? ` · ${s.length} of ${SAMPLES_24H} samples` : "";
 
   // Top clients and destinations: only shown when some console actually returned data.
   const label = (m) => m.host || m.name;
@@ -526,10 +522,10 @@ function render() {
       <div class="note">${lat.length ? `Avg latency ${Math.round(avg(lat))} ms` : "No latency data"}${loss.length ? ` · avg packet loss ${avg(loss).toFixed(1)}%` : ""}</div>
     </section>
     <section class="card"><h2>Total traffic</h2>
-      <div class="big">${esc(fmtRate(down))} <span class="sub">down</span></div>
-      <div class="big" style="font-size:1.4rem">${esc(fmtRate(up))} <span class="sub">up</span></div>
+      <div class="big">${s.length ? esc(fmtBytes(downBytes)) : "–"} <span class="sub">down</span></div>
+      <div class="big" style="font-size:1.4rem">${s.length ? esc(fmtBytes(upBytes)) : "–"} <span class="sub">up</span></div>
       ${spark([s.map((x) => x.down), s.map((x) => x.up)])}
-      <div class="legend"><span class="d">● Download</span><span class="u">● Upload</span><span>Last 24 h${s.length ? ` · peak ${esc(fmtRate(peakDown))} down` : ""}</span></div>
+      <div class="legend"><span class="d">● Download</span><span class="u">● Upload</span><span>Last 24 h${esc(partial)}</span></div>
     </section>
   </div>
 
