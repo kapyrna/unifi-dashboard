@@ -76,6 +76,8 @@
   dialog::backdrop { background: rgba(0,0,0,.45); }
   label { display: block; margin: .8rem 0 .25rem; font-weight: 600; font-size: .9rem; }
   input { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: .5rem; padding: .5rem .6rem; }
+  label.chk { display: flex; align-items: center; gap: .5rem; }
+  label.chk input { width: auto; }
   details { margin-top: .8rem; }
   summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
   .dlg-actions { display: flex; gap: .5rem; justify-content: space-between; margin-top: 1.2rem; }
@@ -108,6 +110,8 @@
     <div class="hint">Create one at unifi.ui.com in the API section. The page shows every site that key can see.</div>
     <label for="refreshSec">Refresh every (seconds)</label>
     <input id="refreshSec" type="number" min="15" step="5" value="60">
+    <label class="chk"><input id="ptrLookup" type="checkbox"> Look up hostnames for destination IPs</label>
+    <div class="hint">Uses Cloudflare DNS over HTTPS, so the destination IPs shown here are sent to Cloudflare. Results are cached in this browser.</div>
     <details>
       <summary>Advanced</summary>
       <label for="apiBase">API base URL</label>
@@ -140,6 +144,7 @@ const cfg = {
     this.apiKey = store.get("apiKey");
     this.apiBase = store.get("apiBase") || DEFAULT_BASE;
     this.refreshSec = Math.max(15, parseInt(store.get("refreshSec", "60"), 10) || 60);
+    this.ptrLookup = store.get("ptrLookup", "1") !== "0";
   },
 };
 cfg.load();
@@ -221,20 +226,24 @@ function parseWans(devices) {
     .filter((w) => w.enabled);
 }
 
-// Destinations are identified by hostname only; flows that carry just an IP address are skipped.
-const looksLikeIp = (s) => /^[\d.]+$/.test(s) || s.includes(":");
-function flowHost(f) {
+// Destinations are keyed by hostname when the flow has one, otherwise by IP address.
+// IPs are turned into hostnames afterwards by reverse lookup (see resolveFlowIps).
+const IP4 = /^\d{1,3}(\.\d{1,3}){3}$/, IP6 = /^[0-9a-f:]*:[0-9a-f:]*$/i;
+const looksLikeIp = (s) => IP4.test(s) || IP6.test(s);
+function flowKey(f) {
   const d = f.destination || {};
-  const ok = (c) => typeof c === "string" && /^[a-z0-9_*.-]+\.[a-z0-9_-]+\.?$/i.test(c.trim()) && !looksLikeIp(c.trim());
-  const h = [d.domain, d.hostname, d.fqdn, d.host, d.name, f.destination_domain, f.domain, f.hostname].find(ok);
-  return h ? h.trim().replace(/\.$/, "").toLowerCase() : "";
+  const isHost = (c) => typeof c === "string" && /^[a-z0-9_*.-]+\.[a-z0-9_-]+\.?$/i.test(c.trim()) && !looksLikeIp(c.trim());
+  const name = [d.domain, d.hostname, d.fqdn, d.host, d.name, f.destination_domain, f.domain, f.hostname].find(isHost);
+  if (name) return name.trim().replace(/\.$/, "").toLowerCase();
+  const ip = [d.ip, d.address, f.destination_ip, d.domain, d.hostname].find((c) => typeof c === "string" && looksLikeIp(c.trim()));
+  return ip ? ip.trim().toLowerCase() : "";
 }
 
 function parseFlows(r) {
   const rows = Array.isArray(r) ? r : r.data || r.flows || [];
   const hosts = new Map();
   for (const f of rows) {
-    const host = flowHost(f);
+    const host = flowKey(f);
     if (!host) continue;
     const t = f.traffic_data || f.traffic || {};
     const bytes = num(t.total_bytes ?? f.total_bytes) || num(t.bytes_rx) + num(t.bytes_tx) || num(f.bytes);
@@ -288,6 +297,68 @@ function hostName(h) {
 }
 const KBPS_TO_BYTES = 125; // kbit/s -> bytes/s
 
+// ---------- reverse DNS for destination IPs (DNS over HTTPS) ----------
+const DOH = "https://cloudflare-dns.com/dns-query";
+const PTR_KEY = "ptr", PTR_HIT_MS = 7 * 864e5, PTR_MISS_MS = 864e5, PTR_MAX = 1000, PTR_TOP = 25;
+const isPrivateIp = (ip) => /^(10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|22[4-9]\.|2[3-5]\d\.)/.test(ip)
+  || /^(::1?$|f[cd]|fe[89ab])/i.test(ip);
+function ptrName(ip) {
+  if (IP4.test(ip)) return ip.split(".").reverse().join(".") + ".in-addr.arpa";
+  if (!IP6.test(ip)) return "";
+  const [head, tail] = ip.split("::");
+  const hs = head ? head.split(":") : [], ts = tail ? tail.split(":") : [];
+  const groups = ip.includes("::") ? [...hs, ...Array(8 - hs.length - ts.length).fill("0"), ...ts] : hs;
+  const hex = groups.map((g) => g.padStart(4, "0")).join("");
+  return hex.length === 32 ? [...hex].reverse().join(".") + ".ip6.arpa" : "";
+}
+// Returns a hostname, "" when there is none, or undefined on a network error (not cached).
+async function ptrLookup(ip) {
+  const name = ptrName(ip); if (!name) return "";
+  try {
+    const r = await fetch(`${DOH}?name=${name}&type=PTR`, { headers: { Accept: "application/dns-json" }, signal: AbortSignal.timeout(4000) });
+    if (!r.ok) return undefined;
+    const a = ((await r.json()).Answer || []).find((x) => x.type === 12);
+    return a ? String(a.data).replace(/\.$/, "").toLowerCase() : "";
+  } catch { return undefined; }
+}
+async function resolveIps(ips) {
+  let saved = {}; try { saved = JSON.parse(store.get(PTR_KEY, "{}")) || {}; } catch {}
+  const out = new Map(), todo = [], now = Date.now();
+  for (const ip of ips) {
+    const c = saved[ip];
+    if (c && now - c.t < (c.h ? PTR_HIT_MS : PTR_MISS_MS)) { if (c.h) out.set(ip, c.h); } else todo.push(ip);
+  }
+  let next = 0;
+  const worker = async () => {
+    while (next < todo.length) {
+      const ip = todo[next++], h = await ptrLookup(ip);
+      if (h === undefined) continue;
+      saved[ip] = { h, t: Date.now() };
+      if (h) out.set(ip, h);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(6, todo.length) }, worker));
+  const keys = Object.keys(saved);
+  if (keys.length > PTR_MAX) keys.sort((a, b) => saved[a].t - saved[b].t).slice(0, keys.length - PTR_MAX).forEach((k) => delete saved[k]);
+  store.set(PTR_KEY, JSON.stringify(saved));
+  return out;
+}
+// Replace IP keys in each site's flow map with their hostnames (merging bytes), top IPs only.
+async function resolveFlowIps(models) {
+  const ipBytes = new Map();
+  for (const m of models) if (m.flows?.ok) for (const [k, v] of m.flows.value) if (looksLikeIp(k) && !isPrivateIp(k)) ipBytes.set(k, (ipBytes.get(k) || 0) + v);
+  const top = [...ipBytes].sort((a, b) => b[1] - a[1]).slice(0, PTR_TOP).map(([k]) => k);
+  if (!top.length) return;
+  const names = await resolveIps(top);
+  if (!names.size) return;
+  for (const m of models) {
+    if (!m.flows?.ok) continue;
+    const merged = new Map(); // new map: the cached original stays untouched
+    for (const [k, v] of m.flows.value) { const key = names.get(k) || k; merged.set(key, (merged.get(key) || 0) + v); }
+    m.flows = { ok: true, value: merged };
+  }
+}
+
 async function loadModels() {
   const [sites, hosts, isp] = await Promise.all([
     pages("/v1/sites?pageSize=100"),
@@ -325,6 +396,7 @@ async function loadModels() {
       wans, clients, flows,
     };
   }));
+  if (cfg.ptrLookup) await resolveFlowIps(models);
   return { models, series, warnings };
 }
 
@@ -500,13 +572,13 @@ async function refresh() {
 const dlg = $("#dlg");
 function openSettings() {
   $("#apiKey").value = cfg.apiKey; $("#refreshSec").value = cfg.refreshSec;
-  $("#apiBase").value = store.get("apiBase");
+  $("#apiBase").value = store.get("apiBase"); $("#ptrLookup").checked = cfg.ptrLookup;
   dlg.showModal();
 }
 $("#settings").onclick = openSettings;
 $("#cancel").onclick = () => dlg.close();
 $("#clearKey").onclick = () => {
-  ["apiKey", "apiBase", "refreshSec", "baseUrl"].forEach((k) => store.del(k));
+  ["apiKey", "apiBase", "refreshSec", "ptrLookup", "ptr", "baseUrl"].forEach((k) => store.del(k));
   cfg.load(); state.models = []; state.series = []; state.warnings = []; state.error = ""; cache.clear();
   $("#banner").innerHTML = ""; dlg.close(); schedule(); render();
 };
@@ -515,6 +587,7 @@ $("#form").addEventListener("submit", () => {
   const base = $("#apiBase").value.trim();
   if (base && base !== DEFAULT_BASE) store.set("apiBase", base); else store.del("apiBase");
   store.set("refreshSec", String(Math.max(15, parseInt($("#refreshSec").value, 10) || 60)));
+  store.set("ptrLookup", $("#ptrLookup").checked ? "1" : "0");
   cfg.load(); cache.clear(); schedule(); refresh();
 });
 $("#refresh").onclick = refresh;
