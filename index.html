@@ -34,7 +34,7 @@
   button:hover { border-color: var(--accent); }
   button:disabled { opacity: .6; cursor: default; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .grid3 { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); margin-bottom: .6rem; }
+  .grid3 { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); margin-bottom: .6rem; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: .7rem 1rem; min-width: 0; }
   .card h2 { margin: 0 0 .35rem; font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
   .big { font-size: 2.1rem; font-weight: 650; line-height: 1.15; }
@@ -59,6 +59,11 @@
   tr:last-child td { border-bottom: 0; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .tablewrap { overflow-x: auto; }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .1rem .6rem; padding: .2rem 0; }
+  .row .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .val { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .bar { grid-column: 1 / -1; height: .25rem; border-radius: .15rem; background: var(--unk-bg); overflow: hidden; }
+  .bar b { display: block; height: 100%; background: var(--accent); }
   .legend { display: flex; flex-wrap: wrap; gap: .2rem .9rem; font-size: .85rem; color: var(--muted); margin-top: .3rem; }
   .legend .d { color: var(--down); } .legend .u { color: var(--up); }
   .spark { width: 100%; height: 2.2rem; display: block; margin-top: .25rem; }
@@ -149,6 +154,11 @@ function fmtRate(bytesPerSec) {
   while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
   return `${i === 0 || n >= 100 ? n.toFixed(0) : n.toFixed(1)} ${u[i]}`;
 }
+function fmtBytes(n) {
+  const u = ["B", "kB", "MB", "GB", "TB", "PB"]; let i = 0; n = num(n);
+  while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
+  return `${i === 0 || n >= 100 ? n.toFixed(0) : n.toFixed(1)} ${u[i]}`;
+}
 const RANK = { ok: 0, warning: 1, error: 2 };
 const LABEL = { ok: "Healthy", warning: "Degraded", error: "Down", unknown: "Unknown" };
 const chip = (st, text) => `<span class="chip ${esc(st)}"><i></i>${esc(text ?? LABEL[st] ?? st)}</span>`;
@@ -210,12 +220,35 @@ function parseWans(devices) {
     .filter((w) => w.enabled);
 }
 
-// Per-WAN detail is not in the Site Manager cloud API. Best effort: read the gateway from the
-// console's local Network API through the cloud connector (assumes one site per console).
-function loadWans(site) {
-  return cached(`dev:${site.hostId}`, () =>
-    api(`/v1/connector/consoles/${encodeURIComponent(site.hostId)}/network/api/s/default/stat/device`).then((r) => parseWans(r.data || [])));
+function parseFlows(r) {
+  const rows = Array.isArray(r) ? r : r.data || r.flows || [];
+  const hosts = new Map();
+  for (const f of rows) {
+    const d = f.destination || {};
+    const host = d.domain || d.hostname || d.name || f.destination_domain || d.ip || f.destination_ip;
+    if (!host) continue;
+    const t = f.traffic_data || f.traffic || {};
+    const bytes = num(t.total_bytes ?? f.total_bytes) || num(t.bytes_rx) + num(t.bytes_tx) || num(f.bytes);
+    hosts.set(host, (hosts.get(host) || 0) + bytes);
+  }
+  return hosts;
 }
+
+// Per-WAN detail, client traffic and destination hostnames are not in the Site Manager cloud API.
+// Best effort: read them from the console's local Network API through the cloud connector
+// (assumes one site per console). Anything that fails is simply left out of the page.
+const connect = (site, path, init) => api(`/v1/connector/consoles/${encodeURIComponent(site.hostId)}/${path}`, init);
+const loadWans = (site) => cached(`dev:${site.hostId}`, () =>
+  connect(site, "network/api/s/default/stat/device").then((r) => parseWans(r.data || [])));
+const loadClients = (site) => cached(`sta:${site.hostId}`, () =>
+  connect(site, "network/api/s/default/stat/sta").then((r) => r.data || []));
+const loadFlows = (site) => cached(`flows:${site.hostId}`, () => {
+  const to = Date.now(), from = to - 24 * 3600 * 1000;
+  return connect(site, "network/v2/api/site/default/traffic-flows", {
+    method: "POST",
+    body: JSON.stringify({ timestampFrom: from, timestampTo: to, pageNumber: 0, pageSize: 1000, skip: 0, limit: 1000 }),
+  }).then(parseFlows);
+});
 
 // ---------- health rules (derived from cloud statistics) ----------
 function siteHealth(st) {
@@ -273,14 +306,14 @@ async function loadModels() {
   const models = await Promise.all(sites.map(async (s) => {
     const st = s.statistics || {};
     const w = latest.get(`${s.hostId}:${s.siteId}`);
-    const wans = await loadWans(s);
+    const [wans, clients, flows] = await Promise.all([loadWans(s), loadClients(s), loadFlows(s)]);
     return {
       id: s.siteId, name: s.meta?.name || s.siteId, host: hostById.get(s.hostId) || "",
       isp: st.ispInfo?.name || "", counts: st.counts || {}, issues: st.internetIssues || [],
       wanUptime: st.percentages?.wanUptime, wan: w,
       health: siteHealth(st), wanStatus: combineWan(wanHealth(st, w), wans),
       down: w ? num(w.download_kbps) * KBPS_TO_BYTES : 0, up: w ? num(w.upload_kbps) * KBPS_TO_BYTES : 0,
-      wans,
+      wans, clients, flows,
     };
   }));
   return { models, series, warnings };
@@ -294,7 +327,10 @@ function demoModels() {
       issues: [], wanUptime: 100, wan: { avgLatency: j(9), packetLoss: 0 }, health: "ok", wanStatus: "ok", down: j(7e6), up: j(9e5),
       wans: { ok: true, value: [
         { name: "Fiber", ip: "203.0.113.7", up: true },
-        { name: "LTE backup", ip: "198.51.100.4", up: true }] } },
+        { name: "LTE backup", ip: "198.51.100.4", up: true }] },
+      clients: { ok: true, value: [["Living-Room-TV", 3e10], ["Desktop", 1.4e10], ["Pixel-9", 6e9], ["NAS", 4e9], ["Laptop", 2e9], ["Doorbell", 3e8]]
+        .map(([name, b]) => ({ name, ip: "192.168.1.20", tx_bytes: j(b * 0.2), rx_bytes: j(b * 0.8) })) },
+      flows: { ok: true, value: new Map([["video.example-cdn.net", 12e9], ["api.example.com", 4e9], ["updates.example.org", 2.5e9], ["photos.example.com", 1.8e9], ["chat.example.io", 6e8], ["tiny.example.net", 1e6]].map(([k, v]) => [k, j(v)])) } },
     { id: "b", name: "Cabin", host: "Cloud Gateway Max", isp: "Example Cable", counts: { totalDevice: 4, offlineDevice: 1, wifiClient: 5, wiredClient: 1, criticalNotification: 1 },
       issues: [{}], wanUptime: 97.4, wan: { avgLatency: j(48), packetLoss: 3.1, downtime: 120, uptime: 3480 }, health: "warning", wanStatus: "warning", down: j(1e6), up: j(2e5),
       wans: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") } },
@@ -323,6 +359,16 @@ function spark(series) {
   const line = (vals, cls) => `<polyline class="${cls}" fill="none" stroke-width="2" vector-effect="non-scaling-stroke" points="${
     vals.map((v, i) => `${((i / (n - 1)) * w).toFixed(1)},${(h - 2 - (v / max) * (h - 4)).toFixed(1)}`).join(" ")}"/>`;
   return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Last 24 hours of WAN traffic">${line(series[0], "d")}${line(series[1], "u")}</svg>`;
+}
+
+const TOP_N = 5;
+function clientBytes(c) {
+  return num(c.tx_bytes) + num(c.rx_bytes) || num(c["wired-tx_bytes"]) + num(c["wired-rx_bytes"]);
+}
+function list(items) {
+  const max = Math.max(1, ...items.map((i) => i.bytes));
+  return items.map((i) => `<div class="row"><div class="title">${esc(i.title)}${i.meta ? ` <span class="sub">${esc(i.meta)}</span>` : ""}</div>
+    <div class="val">${esc(fmtBytes(i.bytes))}</div><div class="bar"><b style="width:${(i.bytes / max * 100).toFixed(1)}%"></b></div></div>`).join("");
 }
 
 // One entry per WAN. Falls back to a single site-level line from the cloud ISP metrics.
@@ -361,6 +407,16 @@ function render() {
   const s = state.series;
   const peakDown = s.length ? Math.max(...s.map((x) => x.down)) : 0;
 
+  // Top clients and destinations: only shown when some console actually returned data.
+  const label = (m) => m.host || m.name;
+  const topClients = M.flatMap((m) => (m.clients?.ok ? m.clients.value : []).map((c) => ({
+    title: c.name || c.hostname || c.mac || "Unknown", meta: M.length > 1 ? label(m) : "", bytes: clientBytes(c) })))
+    .filter((x) => x.bytes > 0).sort((a, b) => b.bytes - a.bytes).slice(0, TOP_N);
+  const dest = new Map();
+  for (const m of M) if (m.flows?.ok) for (const [k, v] of m.flows.value) dest.set(k, (dest.get(k) || 0) + v);
+  const topDest = [...dest].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, TOP_N).map(([k, v]) => ({ title: k, meta: "", bytes: v }));
+  const topCard = (title, items) => items.length ? `<section class="card"><h2>${title}</h2>${list(items)}</section>` : "";
+
   main.innerHTML = `
   <div class="grid3">
     <section class="card"><h2>Overall health</h2>
@@ -378,6 +434,7 @@ function render() {
       ${spark([s.map((x) => x.down), s.map((x) => x.up)])}
       <div class="legend"><span class="d">● Download</span><span class="u">● Upload</span><span>Last 24 h${s.length ? ` · peak ${esc(fmtRate(peakDown))} down` : ""}</span></div>
     </section>
+    ${topCard("Top clients", topClients)}${topCard("Top destinations", topDest)}
   </div>
 
   <section class="card"><h2>Sites</h2>

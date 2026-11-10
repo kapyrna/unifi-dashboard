@@ -6,6 +6,7 @@ A single-file static page (`index.html`) that shows UniFi health and traffic acr
 - WAN health (per site and combined)
 - Total traffic (latest WAN rate, plus a 24 h sparkline)
 - A per-site table, with one line per WAN when a site has several
+- Top clients and top destinations, only when at least one console returns that data
 
 No build step. Open `index.html` in a browser or host it on any static server.
 
@@ -25,6 +26,7 @@ Add `?demo=1` to the URL to preview the page with sample data.
 | Overall health, devices, clients | `GET /v1/sites` (counts, internet issues, WAN uptime), `GET /v1/hosts` for console names |
 | WAN health, total traffic | `GET /v1/isp-metrics/5m?duration=24h` (latency, packet loss, throughput) |
 | Per-WAN lines (name, IP, link state) | Console connector, gateway device (see below). Falls back to one line from the ISP metrics |
+| Top clients, top destinations (cards shown only if data exists) | Console connector: client list and traffic flows from the last 24 h (see below) |
 
 Site health is derived: Down if a gateway is offline, Degraded if any device is offline or there are critical alerts or internet issues, otherwise Healthy.
 
@@ -32,4 +34,4 @@ Site health is derived: Down if a gateway is offline, Degraded if any device is 
 
 - **CORS:** I couldn't verify that `api.ui.com` allows requests from a browser page. If the page reports it can't reach the API, run it behind a CORS proxy and set the proxy URL under Settings, Advanced.
 - **One site per console is assumed.** The connector always uses the console's `default` site, so a console with several sites would show the same WAN detail for each of them.
-- **Per-WAN detail is not in the cloud API.** The page tries to reach each console's gateway through the Site Manager connector (`/v1/connector/consoles/{id}/...`). That needs console firmware 5.0.3 or later and an owner or admin key, and is limited to 100 requests per minute per console, so the result is cached for 5 minutes. The gateway endpoint used is not part of the official API, so it may not work on every console. When it fails, each site falls back to a single WAN line from the ISP metrics.
+- **Per-WAN detail, client traffic and destination hostnames are not in the cloud API.** The page tries to reach each console's gateway through the Site Manager connector (`/v1/connector/consoles/{id}/...`). That needs console firmware 5.0.3 or later and an owner or admin key, and is limited to 100 requests per minute per console, so the result is cached for 5 minutes. The endpoints used are not part of the official API, so they may not work on every console. When the gateway call fails, the site shows a single WAN line from the ISP metrics. When the client or flow calls fail (or return nothing), the Top clients and Top destinations cards are left out and nothing is shown in their place. If several consoles succeed, the lists are combined across them.
