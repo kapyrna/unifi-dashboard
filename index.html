@@ -30,6 +30,7 @@
   button { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line);
     border-radius: 8px; padding: 6px 12px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .6; cursor: default; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .grid3 { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 12px; }
   .grid2 { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
@@ -44,7 +45,6 @@
   .chip.error { color: var(--err); background: var(--err-bg); }
   .chip.unknown { color: var(--unk); background: var(--unk-bg); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .chips .name { font-weight: 500; opacity: .85; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
   th { font-size: 12px; font-weight: 600; color: var(--muted); }
@@ -58,16 +58,19 @@
   .row .val { font-variant-numeric: tabular-nums; font-weight: 550; text-align: right; }
   .bar { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--unk-bg); overflow: hidden; }
   .bar b { display: block; height: 100%; background: var(--accent); }
-  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .legend .d { color: var(--down); } .legend .u { color: var(--up); }
   .spark { width: 100%; height: 48px; display: block; margin-top: 8px; }
   .spark .d { stroke: var(--down); } .spark .u { stroke: var(--up); }
   .banner { border: 1px solid var(--err); background: var(--err-bg); color: var(--err); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; }
+  .banner.warn { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
   .empty { text-align: center; padding: 48px 16px; color: var(--muted); }
   dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--text); padding: 20px; width: min(460px, 92vw); }
   dialog::backdrop { background: rgba(0,0,0,.45); }
   label { display: block; margin: 12px 0 4px; font-weight: 600; font-size: 13px; }
   input { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   .dlg-actions { display: flex; gap: 8px; justify-content: space-between; margin-top: 18px; }
   .dlg-actions div { display: flex; gap: 8px; }
   .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
@@ -93,13 +96,17 @@
   <form method="dialog" id="form">
     <h2 style="margin:0 0 4px;font-size:18px">Connection</h2>
     <div class="hint">Stored only in this browser's localStorage, under keys prefixed <code>unifi-dashboard:</code>.</div>
-    <label for="baseUrl">Controller URL</label>
-    <input id="baseUrl" type="url" placeholder="https://192.168.1.1" autocomplete="off">
-    <label for="apiKey">API key</label>
-    <input id="apiKey" type="password" placeholder="Paste your UniFi API key" autocomplete="off">
-    <div class="hint">Create one in UniFi Network under Settings, Control Plane, Integrations.</div>
+    <label for="apiKey">Site Manager API key</label>
+    <input id="apiKey" type="password" placeholder="Paste your API key" autocomplete="off">
+    <div class="hint">Create one at unifi.ui.com in the API section. The page shows every site that key can see.</div>
     <label for="refreshSec">Refresh every (seconds)</label>
-    <input id="refreshSec" type="number" min="10" step="5" value="30">
+    <input id="refreshSec" type="number" min="15" step="5" value="60">
+    <details>
+      <summary>Advanced</summary>
+      <label for="apiBase">API base URL</label>
+      <input id="apiBase" type="url" placeholder="https://api.ui.com" autocomplete="off">
+      <div class="hint">Change only if you route requests through your own CORS proxy.</div>
+    </details>
     <div class="dlg-actions">
       <button type="button" id="clearKey">Clear saved settings</button>
       <div>
@@ -115,6 +122,7 @@
 
 // ---------- storage (all keys namespaced) ----------
 const NS = "unifi-dashboard";
+const DEFAULT_BASE = "https://api.ui.com";
 const store = {
   get(k, d = "") { try { const v = localStorage.getItem(`${NS}:${k}`); return v === null ? d : v; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(`${NS}:${k}`, v); } catch {} },
@@ -122,9 +130,9 @@ const store = {
 };
 const cfg = {
   load() {
-    this.baseUrl = store.get("baseUrl");
     this.apiKey = store.get("apiKey");
-    this.refreshSec = Math.max(10, parseInt(store.get("refreshSec", "30"), 10) || 30);
+    this.apiBase = store.get("apiBase") || DEFAULT_BASE;
+    this.refreshSec = Math.max(15, parseInt(store.get("refreshSec", "60"), 10) || 60);
   },
 };
 cfg.load();
@@ -134,6 +142,7 @@ const DEMO = new URLSearchParams(location.search).has("demo");
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const num = (v) => (Number.isFinite(+v) ? +v : 0);
+const has = (v) => v !== null && v !== undefined && Number.isFinite(+v);
 function fmtBytes(n) {
   const u = ["B", "kB", "MB", "GB", "TB", "PB"]; let i = 0; n = num(n);
   while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
@@ -144,10 +153,6 @@ function fmtRate(bytesPerSec) {
   while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
   return `${i === 0 || n >= 100 ? n.toFixed(0) : n.toFixed(1)} ${u[i]}`;
 }
-function fmtDur(s) {
-  s = num(s); const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
-}
 const RANK = { ok: 0, warning: 1, error: 2 };
 const LABEL = { ok: "Healthy", warning: "Degraded", error: "Down", unknown: "Unknown" };
 const chip = (st, text) => `<span class="chip ${esc(st)}"><i></i>${esc(text ?? LABEL[st] ?? st)}</span>`;
@@ -156,37 +161,44 @@ function worst(statuses) {
   if (!known.length) return "unknown";
   return known.reduce((a, b) => (RANK[b] > RANK[a] ? b : a));
 }
+const settle = (p) => p.then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }));
 
 // ---------- API ----------
 async function api(path, init = {}) {
-  const base = cfg.baseUrl.replace(/\/+$/, "");
-  const headers = { "X-API-KEY": cfg.apiKey, Accept: "application/json", ...(init.body ? { "Content-Type": "application/json" } : {}) };
-  const res = await fetch(base + path, { ...init, headers });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText} (${path})`);
+  const base = cfg.apiBase.replace(/\/+$/, "");
+  const headers = { "X-API-Key": cfg.apiKey, Accept: "application/json", ...(init.body ? { "Content-Type": "application/json" } : {}) };
+  const res = await fetch(base + path, { ...init, headers, signal: AbortSignal.timeout(30000) });
+  if (!res.ok) {
+    const e = new Error(`${res.status} ${res.statusText} (${path.split("?")[0]})`);
+    e.status = res.status; e.retryAfter = res.headers.get("retry-after");
+    throw e;
+  }
   return res.json();
 }
 
-async function listSites() {
-  try {
-    const r = await api("/proxy/network/integration/v1/sites?limit=200");
-    return (r.data || []).map((s) => ({ id: s.id, name: s.name, ref: s.internalReference || "default" }));
-  } catch {
-    const r = await api("/proxy/network/api/self/sites");
-    return (r.data || []).map((s) => ({ id: s.name, name: s.desc || s.name, ref: s.name }));
+async function pages(path) {
+  const out = []; let token = "";
+  for (let i = 0; i < 20; i++) {
+    const r = await api(path + (token ? `&nextToken=${encodeURIComponent(token)}` : ""));
+    out.push(...(r.data || []));
+    token = r.nextToken;
+    if (!token) break;
   }
+  return out;
 }
 
-const flowCache = new Map(); // site.ref -> {t, hosts}
-const FLOW_TTL = 5 * 60 * 1000;
+// Memoised (promise-level) cache so repeated refreshes don't hammer the console connector.
+const cache = new Map();
+const CONNECTOR_TTL = 5 * 60 * 1000;
+function cached(key, fn) {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.t < CONNECTOR_TTL) return hit.p;
+  const p = settle(fn());
+  cache.set(key, { t: Date.now(), p });
+  return p;
+}
 
-async function loadFlows(site) {
-  const hit = flowCache.get(site.ref);
-  if (hit && Date.now() - hit.t < FLOW_TTL) return hit.hosts;
-  const to = Date.now(), from = to - 24 * 3600 * 1000;
-  const r = await api(`/proxy/network/v2/api/site/${encodeURIComponent(site.ref)}/traffic-flows`, {
-    method: "POST",
-    body: JSON.stringify({ timestampFrom: from, timestampTo: to, pageNumber: 0, pageSize: 1000, skip: 0, limit: 1000 }),
-  });
+function parseFlows(r) {
   const rows = Array.isArray(r) ? r : r.data || r.flows || [];
   const hosts = new Map();
   for (const f of rows) {
@@ -197,159 +209,120 @@ async function loadFlows(site) {
     const bytes = num(t.total_bytes ?? f.total_bytes) || num(t.bytes_rx) + num(t.bytes_tx) || num(f.bytes);
     hosts.set(host, (hosts.get(host) || 0) + bytes);
   }
-  flowCache.set(site.ref, { t: Date.now(), hosts });
   return hosts;
 }
 
-const settle = (p) => p.then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }));
-
-async function loadSite(site) {
-  const base = `/proxy/network/api/s/${encodeURIComponent(site.ref)}`;
-  const [health, clients, flows] = await Promise.all([
-    settle(api(`${base}/stat/health`).then((r) => r.data || [])),
-    settle(api(`${base}/stat/sta`).then((r) => r.data || [])),
-    settle(loadFlows(site)),
+// Per-client traffic and destination hostnames are not in the Site Manager cloud API.
+// Best effort: reach the console's local Network API through the cloud connector.
+async function loadConnector(site) {
+  const conn = (p, init) => api(`/v1/connector/consoles/${encodeURIComponent(site.hostId)}/${p}`, init);
+  const map = await cached(`map:${site.hostId}`, () => conn("network/integration/v1/sites?limit=200").then((r) => r.data || []));
+  if (!map.ok) return { clients: map, flows: map };
+  const ent = map.value.find((s) => s.id === site.siteId) || (map.value.length === 1 ? map.value[0] : null);
+  if (!ent) { const m = { ok: false, error: new Error("Site not found on its console") }; return { clients: m, flows: m }; }
+  const ref = encodeURIComponent(ent.internalReference || "default");
+  const [clients, flows] = await Promise.all([
+    cached(`sta:${site.hostId}:${ref}`, () => conn(`network/api/s/${ref}/stat/sta`).then((r) => r.data || [])),
+    cached(`flows:${site.hostId}:${ref}`, () => {
+      const to = Date.now(), from = to - 24 * 3600 * 1000;
+      return conn(`network/v2/api/site/${ref}/traffic-flows`, {
+        method: "POST",
+        body: JSON.stringify({ timestampFrom: from, timestampTo: to, pageNumber: 0, pageSize: 1000, skip: 0, limit: 1000 }),
+      }).then(parseFlows);
+    }),
   ]);
-  return { site, health, clients, flows };
+  return { clients, flows };
+}
+
+// ---------- health rules (derived from cloud statistics) ----------
+function siteHealth(st) {
+  const c = st.counts || {};
+  if (num(c.offlineGatewayDevice) > 0) return "error";
+  if (num(c.offlineDevice) > 0 || num(c.criticalNotification) > 0 || (st.internetIssues || []).length) return "warning";
+  return "ok";
+}
+function wanHealth(st, w) {
+  const c = st.counts || {};
+  if (num(c.offlineGatewayDevice) > 0) return "error";
+  if (!num(c.gatewayDevice) && !w) return "unknown";
+  if (w && has(w.uptime) && num(w.uptime) === 0 && num(w.downtime) > 0) return "error";
+  if ((st.internetIssues || []).length || (w && (num(w.downtime) > 0 || num(w.packetLoss) >= 2))) return "warning";
+  return "ok";
+}
+function hostName(h) {
+  const r = h.reportedState || {};
+  return r.name || r.hostname || h.userData?.name || h.ipAddress || h.id;
+}
+const KBPS_TO_BYTES = 125; // kbit/s -> bytes/s
+
+async function loadModels() {
+  const [sites, hosts, isp] = await Promise.all([
+    pages("/v1/sites?pageSize=100"),
+    settle(pages("/v1/hosts?pageSize=100")),
+    settle(api("/v1/isp-metrics/5m?duration=24h")),
+  ]);
+  const warnings = [];
+  if (!isp.ok) warnings.push(`WAN metrics unavailable: ${explain(isp.error)}`);
+  const hostById = new Map((hosts.ok ? hosts.value : []).map((h) => [h.id, hostName(h)]));
+
+  // ISP metrics: latest sample per site, and a 24 h total-traffic series.
+  const latest = new Map(); const totals = new Map();
+  for (const entry of isp.ok ? isp.value.data || [] : []) {
+    const periods = [...(entry.periods || [])].sort((a, b) => String(a.metricTime).localeCompare(String(b.metricTime)));
+    for (const p of periods) {
+      const w = p.data?.wan; if (!w) continue;
+      latest.set(`${entry.hostId}:${entry.siteId}`, w);
+      const t = totals.get(p.metricTime) || { down: 0, up: 0 };
+      t.down += num(w.download_kbps) * KBPS_TO_BYTES; t.up += num(w.upload_kbps) * KBPS_TO_BYTES;
+      totals.set(p.metricTime, t);
+    }
+  }
+  const series = [...totals].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([t, v]) => ({ t, ...v }));
+
+  const models = await Promise.all(sites.map(async (s) => {
+    const st = s.statistics || {};
+    const w = latest.get(`${s.hostId}:${s.siteId}`);
+    const conn = await loadConnector(s);
+    return {
+      id: s.siteId, name: s.meta?.name || s.siteId, host: hostById.get(s.hostId) || "",
+      isp: st.ispInfo?.name || "", counts: st.counts || {}, issues: st.internetIssues || [],
+      wanUptime: st.percentages?.wanUptime, wan: w,
+      health: siteHealth(st), wanStatus: wanHealth(st, w),
+      down: w ? num(w.download_kbps) * KBPS_TO_BYTES : 0, up: w ? num(w.upload_kbps) * KBPS_TO_BYTES : 0,
+      clients: conn.clients, flows: conn.flows,
+    };
+  }));
+  return { models, series, warnings };
 }
 
 // ---------- demo data ----------
-function demoLoad() {
-  const jitter = (n) => Math.round(n * (0.8 + Math.random() * 0.4));
-  const sites = [
-    { id: "a", name: "Home", ref: "default" },
-    { id: "b", name: "Cabin", ref: "cabin" },
+function demoModels() {
+  const j = (n) => Math.round(n * (0.8 + Math.random() * 0.4));
+  const clients = (names) => ({ ok: true, value: names.map((n, i) => ({
+    name: n, ip: `192.168.1.${20 + i}`, tx_bytes: j(9e9 / (i + 1)), rx_bytes: j(3e10 / (i + 1)) })) });
+  const flows = (o) => ({ ok: true, value: new Map(Object.entries(o).map(([k, v]) => [k, j(v)])) });
+  const models = [
+    { id: "a", name: "Home", host: "Dream Machine Pro", isp: "Example Fiber", counts: { totalDevice: 9, offlineDevice: 0, wifiClient: 31, wiredClient: 12, criticalNotification: 0 },
+      issues: [], wanUptime: 100, wan: { avgLatency: j(9), packetLoss: 0 }, health: "ok", wanStatus: "ok", down: j(7e6), up: j(9e5),
+      clients: clients(["Living-Room-TV", "Desktop", "Pixel-9", "NAS", "Laptop"]),
+      flows: flows({ "video.example-cdn.net": 12e9, "api.example.com": 4e9, "updates.example.org": 2.5e9, "photos.example.com": 1.8e9 }) },
+    { id: "b", name: "Cabin", host: "Cloud Gateway Max", isp: "Example Cable", counts: { totalDevice: 4, offlineDevice: 1, wifiClient: 5, wiredClient: 1, criticalNotification: 1 },
+      issues: [{}], wanUptime: 97.4, wan: { avgLatency: j(48), packetLoss: 3.1, downtime: 120, uptime: 3480 }, health: "warning", wanStatus: "warning", down: j(1e6), up: j(2e5),
+      clients: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") }, flows: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") } },
   ];
-  const mkClients = (names) => names.map((n, i) => ({
-    name: n, hostname: n.toLowerCase(), mac: `aa:bb:cc:00:00:0${i}`, ip: `192.168.1.${20 + i}`,
-    tx_bytes: jitter(9e9 / (i + 1)), rx_bytes: jitter(3e10 / (i + 1)),
-  }));
-  const health = (wanSt, www, rx, tx) => [
-    { subsystem: "wan", status: wanSt, wan_ip: "203.0.113.7", "rx_bytes-r": rx, "tx_bytes-r": tx },
-    { subsystem: "www", status: www, latency: jitter(14), uptime: 864000, drops: 1 },
-    { subsystem: "lan", status: "ok" }, { subsystem: "wlan", status: "ok" }, { subsystem: "vpn", status: "unknown" },
-  ];
-  const hosts = (o) => new Map(Object.entries(o).map(([k, v]) => [k, jitter(v)]));
-  return Promise.resolve(sites.map((s, i) => ({
-    site: s,
-    health: { ok: true, value: i === 0 ? health("ok", "ok", jitter(6e6), jitter(9e5)) : health("ok", "warning", jitter(1e6), jitter(2e5)) },
-    clients: { ok: true, value: mkClients(i === 0 ? ["Living-Room-TV", "Desktop", "Pixel-9", "NAS", "Laptop"] : ["Cabin-Cam", "Tablet"]) },
-    flows: { ok: true, value: hosts(i === 0
-      ? { "video.example-cdn.net": 12e9, "api.example.com": 4e9, "updates.example.org": 2.5e9, "photos.example.com": 1.8e9, "chat.example.io": 6e8 }
-      : { "cam-upload.example.com": 5e9, "api.example.com": 3e8 }) },
-  })));
+  const series = Array.from({ length: 288 }, (_, i) => ({ t: i, down: 5e6 + 4e6 * Math.sin(i / 20) + Math.random() * 1e6, up: 1e6 + 5e5 * Math.sin(i / 15) + Math.random() * 2e5 }));
+  return Promise.resolve({ models, series, warnings: [] });
 }
 
 // ---------- state & rendering ----------
-const state = { results: [], history: [], updated: null, error: "", busy: false };
-const HISTORY_MAX = 120;
-
-function subOf(r, name) { return r.health.ok ? r.health.value.find((s) => s.subsystem === name) : undefined; }
-function siteStatus(r) {
-  if (!r.health.ok) return "error";
-  return worst(r.health.value.map((s) => s.status));
-}
+const state = { models: [], series: [], warnings: [], updated: null, error: "", busy: false };
 
 function spark(series) {
   const n = series[0].length; if (n < 2) return "";
   const w = 240, h = 48, max = Math.max(1, ...series.flat());
   const line = (vals, cls) => `<polyline class="${cls}" fill="none" stroke-width="2" vector-effect="non-scaling-stroke" points="${
     vals.map((v, i) => `${((i / (n - 1)) * w).toFixed(1)},${(h - 2 - (v / max) * (h - 4)).toFixed(1)}`).join(" ")}"/>`;
-  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Recent traffic">${line(series[0], "d")}${line(series[1], "u")}</svg>`;
-}
-
-function render() {
-  const main = $("#main");
-  if (!DEMO && (!cfg.baseUrl || !cfg.apiKey)) {
-    main.innerHTML = `<div class="card empty"><p>Add your controller URL and API key to get started.</p><button class="primary" id="openSettings" type="button">Open settings</button></div>`;
-    $("#openSettings").onclick = openSettings;
-    return;
-  }
-  const R = state.results;
-  if (!R.length) { main.innerHTML = `<div class="card empty">${state.busy ? "Loading…" : "No sites found."}</div>`; return; }
-  const multi = R.length > 1;
-
-  // overall health
-  const statuses = R.map(siteStatus);
-  const overall = worst(statuses);
-  const okSites = statuses.filter((s) => s === "ok").length;
-  const subNames = ["wan", "www", "lan", "wlan", "vpn"];
-  const subChips = subNames.map((n) => {
-    const all = R.map((r) => subOf(r, n)).filter(Boolean).map((s) => s.status);
-    return all.length ? `<span class="chip ${worst(all)}"><i></i><span class="name">${n.toUpperCase()}</span></span>` : "";
-  }).join("");
-
-  // WAN
-  const wans = R.map((r) => ({ r, wan: subOf(r, "wan"), www: subOf(r, "www") }));
-  const wanStatus = worst(wans.flatMap((x) => [x.wan?.status, x.www?.status]).filter(Boolean));
-  const lat = wans.map((x) => x.www?.latency).filter((v) => Number.isFinite(+v));
-  const avgLat = lat.length ? Math.round(lat.reduce((a, b) => a + +b, 0) / lat.length) : null;
-
-  // traffic
-  const down = wans.reduce((a, x) => a + num(x.wan?.["rx_bytes-r"]), 0);
-  const up = wans.reduce((a, x) => a + num(x.wan?.["tx_bytes-r"]), 0);
-  const clientTotal = R.reduce((a, r) => a + (r.clients.ok ? r.clients.value.reduce((s, c) => s + clientBytes(c), 0) : 0), 0);
-  const h = state.history;
-
-  // top clients
-  const clients = R.flatMap((r) => (r.clients.ok ? r.clients.value.map((c) => ({ c, site: r.site.name })) : []))
-    .map((x) => ({ name: x.c.name || x.c.hostname || x.c.mac || "Unknown", ip: x.c.ip || "", site: x.site, bytes: clientBytes(x.c) }))
-    .sort((a, b) => b.bytes - a.bytes).slice(0, 10);
-  const clientErr = R.filter((r) => !r.clients.ok).length;
-
-  // top destinations
-  const dest = new Map(); let flowFail = 0;
-  for (const r of R) {
-    if (!r.flows.ok) { flowFail++; continue; }
-    for (const [k, v] of r.flows.value) dest.set(k, (dest.get(k) || 0) + v);
-  }
-  const topDest = [...dest].sort((a, b) => b[1] - a[1]).slice(0, 10);
-
-  main.innerHTML = `
-  <div class="grid3">
-    <section class="card"><h2>Overall health</h2>
-      <div class="big">${chip(overall)}</div>
-      <div class="note">${okSites} of ${R.length} site${R.length === 1 ? "" : "s"} healthy</div>
-      <div class="chips">${subChips}</div>
-    </section>
-    <section class="card"><h2>WAN health</h2>
-      <div class="big">${chip(wanStatus)}</div>
-      <div class="note">${avgLat === null ? "No latency data" : `Avg latency ${avgLat} ms`} across ${R.length} site${R.length === 1 ? "" : "s"}</div>
-    </section>
-    <section class="card"><h2>Total traffic</h2>
-      <div class="big">${esc(fmtRate(down))} <span class="sub">down</span></div>
-      <div class="big" style="font-size:18px">${esc(fmtRate(up))} <span class="sub">up</span></div>
-      ${spark([h.map((x) => x.down), h.map((x) => x.up)])}
-      <div class="legend"><span class="d">● Download</span><span class="u">● Upload</span><span>${esc(fmtBytes(clientTotal))} by current clients</span></div>
-    </section>
-  </div>
-
-  <section class="card" style="margin-bottom:12px"><h2>WAN by site</h2>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Site</th><th>Site health</th><th>WAN</th><th>Internet</th><th>WAN IP</th><th class="num">Latency</th><th class="num">Uptime</th><th class="num">Down</th><th class="num">Up</th></tr></thead>
-      <tbody>${wans.map((x, i) => x.r.health.ok ? `<tr>
-        <td>${esc(x.r.site.name)}</td><td>${chip(statuses[i])}</td>
-        <td>${x.wan ? chip(x.wan.status) : "–"}</td><td>${x.www ? chip(x.www.status) : "–"}</td>
-        <td>${esc(x.wan?.wan_ip || "–")}</td>
-        <td class="num">${Number.isFinite(+x.www?.latency) ? `${num(x.www.latency)} ms` : "–"}</td>
-        <td class="num">${x.www?.uptime != null ? esc(fmtDur(x.www.uptime)) : "–"}</td>
-        <td class="num">${esc(fmtRate(x.wan?.["rx_bytes-r"]))}</td><td class="num">${esc(fmtRate(x.wan?.["tx_bytes-r"]))}</td></tr>`
-        : `<tr><td>${esc(x.r.site.name)}</td><td>${chip("error", "Unreachable")}</td><td colspan="7" class="sub">${esc(x.r.health.error.message)}</td></tr>`).join("")}
-      </tbody></table></div>
-  </section>
-
-  <div class="grid2">
-    <section class="card"><h2>Top clients</h2>
-      ${list(clients.map((c) => ({ title: c.name, meta: [c.ip, multi ? c.site : ""].filter(Boolean).join(" · "), bytes: c.bytes })), clientErr ? "Client data unavailable." : "No clients.")}
-      ${clientErr ? `<div class="note">Client data failed for ${clientErr} site${clientErr === 1 ? "" : "s"}.</div>` : `<div class="note">Cumulative bytes for currently connected clients.</div>`}
-    </section>
-    <section class="card"><h2>Top destination hostnames</h2>
-      ${list(topDest.map(([k, v]) => ({ title: k, meta: "", bytes: v })), flowFail === R.length ? "Traffic flow data isn't available from this controller." : "No flows recorded.")}
-      <div class="note">${flowFail === R.length
-        ? "Needs a UniFi Network version with Traffic Flows. This endpoint is not part of the official API, so it may not be available."
-        : "Last 24 hours, from the controller's traffic flows."}</div>
-    </section>
-  </div>`;
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Last 24 hours of WAN traffic">${line(series[0], "d")}${line(series[1], "u")}</svg>`;
 }
 
 function clientBytes(c) {
@@ -363,30 +336,123 @@ function list(items, emptyText) {
     <div class="val">${esc(fmtBytes(i.bytes))}</div><div class="bar"><b style="width:${(i.bytes / max * 100).toFixed(1)}%"></b></div></div>`).join("");
 }
 
+function render() {
+  const main = $("#main");
+  if (!DEMO && !cfg.apiKey) {
+    main.innerHTML = `<div class="card empty"><p>Add your Site Manager API key to get started.</p><button class="primary" id="openSettings" type="button">Open settings</button></div>`;
+    $("#openSettings").onclick = openSettings;
+    return;
+  }
+  const M = state.models;
+  if (!M.length) { main.innerHTML = `<div class="card empty">${state.busy ? "Loading…" : "No sites found for this API key."}</div>`; return; }
+  const multi = M.length > 1;
+  const sum = (f) => M.reduce((a, m) => a + num(f(m)), 0);
+
+  // overall health
+  const overall = worst(M.map((m) => m.health));
+  const okSites = M.filter((m) => m.health === "ok").length;
+  const offline = sum((m) => m.counts.offlineDevice), total = sum((m) => m.counts.totalDevice);
+  const critical = sum((m) => m.counts.criticalNotification), issues = sum((m) => m.issues.length);
+  const countChip = (n, label, bad) => `<span class="chip ${n > 0 ? bad : "ok"}"><i></i>${n} ${label}</span>`;
+
+  // WAN
+  const wanStatus = worst(M.map((m) => m.wanStatus));
+  const lat = M.map((m) => m.wan?.avgLatency).filter(has);
+  const loss = M.map((m) => m.wan?.packetLoss).filter(has);
+  const avg = (a) => a.reduce((x, y) => x + +y, 0) / a.length;
+
+  // traffic
+  const down = sum((m) => m.down), up = sum((m) => m.up);
+  const s = state.series;
+  const peakDown = s.length ? Math.max(...s.map((x) => x.down)) : 0;
+
+  // top clients
+  const clientErrs = M.filter((m) => !m.clients.ok);
+  const clients = M.flatMap((m) => (m.clients.ok ? m.clients.value.map((c) => ({ c, site: m.name })) : []))
+    .map((x) => ({ title: x.c.name || x.c.hostname || x.c.mac || "Unknown", meta: [x.c.ip, multi ? x.site : ""].filter(Boolean).join(" · "), bytes: clientBytes(x.c) }))
+    .sort((a, b) => b.bytes - a.bytes).slice(0, 10);
+
+  // top destinations
+  const flowErrs = M.filter((m) => !m.flows.ok);
+  const dest = new Map();
+  for (const m of M) if (m.flows.ok) for (const [k, v] of m.flows.value) dest.set(k, (dest.get(k) || 0) + v);
+  const topDest = [...dest].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, v]) => ({ title: k, meta: "", bytes: v }));
+
+  const unavailable = (errs, what) => errs.length === M.length
+    ? `${what} isn't in the Site Manager cloud API. This page tries the console connector (console firmware 5.0.3 or later, owner or admin key), which failed: ${errs[0].clients?.error?.message || errs[0].flows?.error?.message}`
+    : `${what} unavailable for ${errs.length} of ${M.length} sites.`;
+
+  main.innerHTML = `
+  <div class="grid3">
+    <section class="card"><h2>Overall health</h2>
+      <div class="big">${chip(overall)}</div>
+      <div class="note">${okSites} of ${M.length} site${M.length === 1 ? "" : "s"} healthy</div>
+      <div class="chips">${countChip(offline, `of ${total} devices offline`, "warning")}${countChip(critical, "critical alerts", "warning")}${countChip(issues, "internet issues", "warning")}</div>
+    </section>
+    <section class="card"><h2>WAN health</h2>
+      <div class="big">${chip(wanStatus)}</div>
+      <div class="note">${lat.length ? `Avg latency ${Math.round(avg(lat))} ms` : "No latency data"}${loss.length ? ` · avg packet loss ${avg(loss).toFixed(1)}%` : ""}</div>
+    </section>
+    <section class="card"><h2>Total traffic</h2>
+      <div class="big">${esc(fmtRate(down))} <span class="sub">down</span></div>
+      <div class="big" style="font-size:18px">${esc(fmtRate(up))} <span class="sub">up</span></div>
+      ${spark([s.map((x) => x.down), s.map((x) => x.up)])}
+      <div class="legend"><span class="d">● Download</span><span class="u">● Upload</span><span>Last 24 h${s.length ? ` · peak ${esc(fmtRate(peakDown))} down` : ""}</span></div>
+    </section>
+  </div>
+
+  <section class="card" style="margin-bottom:12px"><h2>Sites</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Site</th><th>ISP</th><th>Health</th><th>WAN</th><th class="num">WAN uptime</th><th class="num">Latency</th><th class="num">Loss</th><th class="num">Devices</th><th class="num">Clients</th><th class="num">Down</th><th class="num">Up</th></tr></thead>
+      <tbody>${M.map((m) => `<tr>
+        <td>${esc(m.name)}${m.host ? `<div class="meta sub">${esc(m.host)}</div>` : ""}</td>
+        <td>${esc(m.isp || "–")}</td><td>${chip(m.health)}</td><td>${chip(m.wanStatus)}</td>
+        <td class="num">${has(m.wanUptime) ? `${(+m.wanUptime).toFixed(2)}%` : "–"}</td>
+        <td class="num">${has(m.wan?.avgLatency) ? `${Math.round(m.wan.avgLatency)} ms` : "–"}</td>
+        <td class="num">${has(m.wan?.packetLoss) ? `${(+m.wan.packetLoss).toFixed(1)}%` : "–"}</td>
+        <td class="num">${num(m.counts.offlineDevice) ? `${num(m.counts.offlineDevice)} offline / ` : ""}${num(m.counts.totalDevice)}</td>
+        <td class="num">${num(m.counts.wifiClient) + num(m.counts.wiredClient)}</td>
+        <td class="num">${esc(fmtRate(m.down))}</td><td class="num">${esc(fmtRate(m.up))}</td></tr>`).join("")}
+      </tbody></table></div>
+    <div class="note">Health is derived from offline devices, critical alerts and reported internet issues. WAN rates are the latest 5-minute sample.</div>
+  </section>
+
+  <div class="grid2">
+    <section class="card"><h2>Top clients</h2>
+      ${list(clients, "No client data.")}
+      <div class="note">${clientErrs.length ? esc(unavailable(clientErrs, "Per-client traffic")) : "Cumulative bytes for currently connected clients."}</div>
+    </section>
+    <section class="card"><h2>Top destination hostnames</h2>
+      ${list(topDest, "No flows recorded.")}
+      <div class="note">${flowErrs.length ? esc(unavailable(flowErrs, "Destination hostnames")) : "Last 24 hours, from the console's traffic flows."}</div>
+    </section>
+  </div>`;
+}
+
 function explain(e) {
   if (e instanceof TypeError) {
-    return "Couldn't reach the controller. Check the URL, make sure you've trusted its certificate (open the URL in this browser once), and note that the browser blocks the request if the controller doesn't send CORS headers. A CORS proxy or a browser CORS extension may be required.";
+    return "Couldn't reach the API. Check your connection. If it persists, the browser is probably blocking the request because the API doesn't send CORS headers for this page; a CORS proxy (set under Advanced in Settings) may be required.";
   }
-  if (/^40[13]/.test(e.message)) return `Authentication failed (${e.message}). Check the API key.`;
+  if (e.name === "TimeoutError") return "The request timed out.";
+  if (e.status === 401 || e.status === 403) return `Authentication failed (${e.message}). Check the API key.`;
+  if (e.status === 429) return `Rate limited (${e.message})${e.retryAfter ? `, retry in ${e.retryAfter}s` : ""}.`;
   return e.message;
 }
 
 async function refresh() {
   if (state.busy) return;
-  if (!DEMO && (!cfg.baseUrl || !cfg.apiKey)) { render(); return; }
+  if (!DEMO && !cfg.apiKey) { render(); return; }
   state.busy = true; $("#refresh").disabled = true;
   try {
-    const results = DEMO ? await demoLoad() : await listSites().then((s) => Promise.all(s.map(loadSite)));
-    state.results = results;
-    const wans = results.map((r) => subOf(r, "wan"));
-    state.history.push({ down: wans.reduce((a, w) => a + num(w?.["rx_bytes-r"]), 0), up: wans.reduce((a, w) => a + num(w?.["tx_bytes-r"]), 0) });
-    if (state.history.length > HISTORY_MAX) state.history.shift();
+    const r = await (DEMO ? demoModels() : loadModels());
+    state.models = r.models; state.series = r.series; state.warnings = r.warnings;
     state.updated = new Date(); state.error = "";
   } catch (e) {
     state.error = explain(e);
   } finally {
     state.busy = false; $("#refresh").disabled = false;
-    $("#banner").innerHTML = state.error ? `<div class="banner" role="alert">${esc(state.error)}</div>` : "";
+    $("#banner").innerHTML = state.error ? `<div class="banner" role="alert">${esc(state.error)}</div>`
+      : state.warnings.map((w) => `<div class="banner warn">${esc(w)}</div>`).join("");
     $("#updated").textContent = state.updated ? `${DEMO ? "Demo data · " : ""}Updated ${state.updated.toLocaleTimeString()}` : "Not connected";
     render();
   }
@@ -395,29 +461,34 @@ async function refresh() {
 // ---------- settings dialog ----------
 const dlg = $("#dlg");
 function openSettings() {
-  $("#baseUrl").value = cfg.baseUrl; $("#apiKey").value = cfg.apiKey; $("#refreshSec").value = cfg.refreshSec;
+  $("#apiKey").value = cfg.apiKey; $("#refreshSec").value = cfg.refreshSec;
+  $("#apiBase").value = store.get("apiBase");
   dlg.showModal();
 }
 $("#settings").onclick = openSettings;
 $("#cancel").onclick = () => dlg.close();
 $("#clearKey").onclick = () => {
-  ["baseUrl", "apiKey", "refreshSec"].forEach((k) => store.del(k));
-  cfg.load(); state.results = []; state.history = []; flowCache.clear(); dlg.close(); schedule(); render();
+  ["apiKey", "apiBase", "refreshSec", "baseUrl"].forEach((k) => store.del(k));
+  cfg.load(); state.models = []; state.series = []; state.warnings = []; state.error = ""; cache.clear();
+  $("#banner").innerHTML = ""; dlg.close(); schedule(); render();
 };
 $("#form").addEventListener("submit", () => {
-  store.set("baseUrl", $("#baseUrl").value.trim());
   store.set("apiKey", $("#apiKey").value.trim());
-  store.set("refreshSec", String(Math.max(10, parseInt($("#refreshSec").value, 10) || 30)));
-  cfg.load(); state.history = []; flowCache.clear(); schedule(); refresh();
+  const base = $("#apiBase").value.trim();
+  if (base && base !== DEFAULT_BASE) store.set("apiBase", base); else store.del("apiBase");
+  store.set("refreshSec", String(Math.max(15, parseInt($("#refreshSec").value, 10) || 60)));
+  cfg.load(); cache.clear(); schedule(); refresh();
 });
-$("#refresh").onclick = () => { flowCache.clear(); refresh(); };
+$("#refresh").onclick = refresh;
 
 let timer;
 function schedule() {
   clearInterval(timer);
   timer = setInterval(() => { if (!document.hidden) refresh(); }, cfg.refreshSec * 1000);
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden && state.updated && Date.now() - state.updated > cfg.refreshSec * 1000) refresh(); });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && state.updated && Date.now() - state.updated > cfg.refreshSec * 1000) refresh();
+});
 
 schedule();
 render();

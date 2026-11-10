@@ -1,10 +1,10 @@
 # unifi-dashboard
 
-A single-file static page (`index.html`) that shows UniFi health and traffic across all sites:
+A single-file static page (`index.html`) that shows UniFi health and traffic across **every site your account can see**, using the cloud [Site Manager API](https://developer.ui.com/site-manager-api) (`api.ui.com`). No local controller URL is needed.
 
 - Overall health across all sites
 - WAN health (per site and combined)
-- Total traffic (live WAN rate with a short history sparkline)
+- Total traffic (latest WAN rate, plus a 24 h sparkline)
 - Top clients
 - Top destination hostnames (last 24 h)
 
@@ -12,15 +12,24 @@ No build step. Open `index.html` in a browser or host it on any static server.
 
 ## Setup
 
-1. In UniFi Network, go to Settings, Control Plane, Integrations and create an API key.
-2. Open the page, click **Settings**, and enter the controller URL (for example `https://192.168.1.1`) and the key.
+1. Sign in at unifi.ui.com, open the API section, and create an API key.
+2. Open the page, click **Settings**, and paste the key.
 
-Settings are stored in your browser's `localStorage`. Every key is prefixed with `unifi-dashboard:` (`unifi-dashboard:baseUrl`, `unifi-dashboard:apiKey`, `unifi-dashboard:refreshSec`) so they don't collide with other projects on the same origin. The key is kept in plain text, so only use this on a browser you trust.
+Settings are stored in your browser's `localStorage`. Every key is prefixed with `unifi-dashboard:` (`unifi-dashboard:apiKey`, `unifi-dashboard:refreshSec`, and optionally `unifi-dashboard:apiBase`) so they don't collide with other projects on the same origin. The key is kept in plain text, so only use this on a browser you trust.
 
 Add `?demo=1` to the URL to preview the page with sample data.
 
+## Where the data comes from
+
+| Panel | Source |
+| --- | --- |
+| Overall health, devices, clients | `GET /v1/sites` (counts, internet issues, WAN uptime), `GET /v1/hosts` for console names |
+| WAN health, total traffic | `GET /v1/isp-metrics/5m?duration=24h` (latency, packet loss, throughput) |
+| Top clients, top destination hostnames | Console connector (see below) |
+
+Site health is derived: Down if a gateway is offline, Degraded if any device is offline or there are critical alerts or internet issues, otherwise Healthy.
+
 ## Known limitations
 
-- **CORS / certificates:** UniFi controllers generally don't send CORS headers, and use self-signed certificates. If the page can't connect, open the controller URL in the browser once to trust the certificate, and use a CORS proxy or a browser CORS extension if requests are still blocked.
-- **Top destination hostnames** come from the controller's Traffic Flows data, which is not part of the official API. It is best-effort and shows a notice if your controller doesn't provide it.
-- **Health, WAN and client data** use the controller's Network API (`/proxy/network/...`) with the `X-API-KEY` header.
+- **CORS:** I couldn't verify that `api.ui.com` allows requests from a browser page. If the page reports it can't reach the API, run it behind a CORS proxy and set the proxy URL under Settings, Advanced.
+- **Top clients and destination hostnames are not in the cloud API.** The page tries to reach each console's local Network API through the Site Manager connector (`/v1/connector/consoles/{id}/...`). That needs console firmware 5.0.3 or later and an owner or admin key, and is limited to 100 requests per minute per console, so the results are cached for 5 minutes. The client list and traffic flow endpoints used are not part of the official API, so they may not work on every console. When they fail, the panels show why and the rest of the page still works.
