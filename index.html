@@ -317,7 +317,8 @@ function paintUpdated() {
   const bad = detailIssues(state.models);
   if (bad.length) {
     const first = bad[0].errs[0].split(": ")[1];
-    text += ` · console details unavailable for ${bad.length} of ${state.models.filter((m) => !m.offline).length} console${bad.length === 1 ? "" : "s"} (${first})`;
+    const total = state.models.filter((m) => !m.offline).length;
+    text += ` · console details unavailable for ${bad.length} of ${total} console${total === 1 ? "" : "s"} (${first})`;
     tip = "Details come from each console through the Site Manager connector, which needs an owner or admin key.\n" + bad.map((x) => `${siteLabel(x.m)}: ${x.errs.join("; ")}`).join("\n");
   }
   el.textContent = text; el.title = tip;
