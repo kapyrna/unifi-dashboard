@@ -4,7 +4,7 @@ A single-file static page (`index.html`) that shows UniFi health and traffic acr
 
 - Overall health across all sites
 - WAN health (per site and combined)
-- Total traffic: the amount downloaded and uploaded over the last 24 h across all sites, with a sparkline of the day
+- Total traffic: the amount downloaded and uploaded across all sites over a rolling Day (24 h), Week (7 days) or Month (30 days), chosen with the switch on the card, with a sparkline of the period
 - A per-site table, with one line per WAN when a site has several
 - Top clients and top destinations, below the sites list, only when at least one console returns that data. Each shows Down and Up as separate columns; the top 5 are ranked by total traffic (down plus up)
 
@@ -24,7 +24,7 @@ Add `?demo=1` to the URL to preview the page with sample data.
 | Panel | Source |
 | --- | --- |
 | Overall health, devices, clients | `GET /v1/sites` (counts, internet issues, WAN uptime), `GET /v1/hosts` for console names |
-| WAN health, total traffic | `GET /v1/isp-metrics/5m?duration=24h` (latency, packet loss, throughput). Total traffic is each 5-minute sample's average speed times 300 s, summed over 24 h, so it is an estimate and undercounts if samples are missing |
+| WAN health, total traffic | `GET /v1/isp-metrics/5m?duration=24h` (latency, packet loss, throughput). Total traffic is each sample's average speed times the sample length (5-minute samples for Day, hourly samples from `/v1/isp-metrics/1h` for Week and Month), summed over the window, so it is an estimate and undercounts if samples are missing. Week and Month data are fetched only when selected and cached for 5 minutes; the choice is remembered in `unifi-dashboard:range` |
 | Per-WAN lines (name, IP, link state) | Console connector, gateway device (see below). Falls back to one line from the ISP metrics |
 | Top clients, top destinations (cards shown only if data exists) | Console connector: client list and traffic flows from the last 24 h. Destination IPs are turned into hostnames by reverse DNS (see below) |
 

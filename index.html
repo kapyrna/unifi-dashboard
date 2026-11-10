@@ -65,6 +65,11 @@
     background: linear-gradient(90deg, var(--bar) var(--w), transparent var(--w)); }
   .row .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .val { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; text-align: right; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: .4rem; overflow: hidden; margin: -.25rem 0; text-transform: none; letter-spacing: 0; }
+  .seg button { border: 0; border-radius: 0; padding: .05rem .6rem; font-size: .8rem; background: transparent; color: var(--muted); }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button:hover { border-color: var(--line); color: var(--text); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
   .card h2.cols { display: flex; justify-content: space-between; align-items: baseline; }
   .cols .c { display: grid; grid-template-columns: 6rem 6rem; gap: .8rem; padding-right: .5rem; text-align: right; }
   .cols .d { color: var(--down); } .cols .u { color: var(--up); }
@@ -299,7 +304,12 @@ function hostName(h) {
   return r.name || r.hostname || h.userData?.name || h.ipAddress || h.id;
 }
 const KBPS_TO_BYTES = 125; // kbit/s -> bytes/s
-const SAMPLE_SEC = 300, SAMPLES_24H = 288; // ISP metrics are 5-minute samples
+// Total-traffic windows: the cloud API serves 5-minute samples for 24 h, and hourly samples for 7 or 30 days.
+const RANGES = {
+  "24h": { label: "Day", word: "24 h", sec: 300, n: 288, path: "/v1/isp-metrics/5m?duration=24h" },
+  "7d": { label: "Week", word: "7 days", sec: 3600, n: 168, path: "/v1/isp-metrics/1h?duration=7d" },
+  "30d": { label: "Month", word: "30 days", sec: 3600, n: 720, path: "/v1/isp-metrics/1h?duration=30d" },
+};
 
 // ---------- reverse DNS for destination IPs (DNS over HTTPS) ----------
 const DOH = "https://cloudflare-dns.com/dns-query";
@@ -364,6 +374,27 @@ async function resolveFlowIps(models) {
   }
 }
 
+// Sum every site's WAN throughput per timestamp into one total-traffic series (bytes per second).
+function toSeries(data) {
+  const totals = new Map();
+  for (const entry of data) for (const p of entry.periods || []) {
+    const w = p.data?.wan; if (!w) continue;
+    const t = totals.get(p.metricTime) || { down: 0, up: 0 };
+    t.down += num(w.download_kbps) * KBPS_TO_BYTES; t.up += num(w.upload_kbps) * KBPS_TO_BYTES;
+    totals.set(p.metricTime, t);
+  }
+  return [...totals].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([t, v]) => ({ t, ...v }));
+}
+// Series for the selected window. 24 h comes with the main refresh; week and month are fetched on demand and cached.
+async function rangeSeries(range) {
+  if (range === "24h") return { series: state.series24 };
+  if (DEMO) return { series: demoSeries(RANGES[range].n) };
+  const key = `isp:${range}`;
+  const r = await cached(key, () => api(RANGES[range].path).then((x) => toSeries(x.data || [])));
+  if (!r.ok) { cache.delete(key); return { series: [], warning: `${RANGES[range].label} traffic unavailable: ${explain(r.error)}` }; }
+  return { series: r.value };
+}
+
 async function loadModels() {
   const [sites, hosts, isp] = await Promise.all([
     pages("/v1/sites?pageSize=100"),
@@ -374,19 +405,14 @@ async function loadModels() {
   if (!isp.ok) warnings.push(`WAN metrics unavailable: ${explain(isp.error)}`);
   const hostById = new Map((hosts.ok ? hosts.value : []).map((h) => [h.id, hostName(h)]));
 
-  // ISP metrics: latest sample per site, and a 24 h total-traffic series.
-  const latest = new Map(); const totals = new Map();
-  for (const entry of isp.ok ? isp.value.data || [] : []) {
+  // ISP metrics: latest sample per site, plus the 24 h total-traffic series.
+  const latest = new Map();
+  const ispData = isp.ok ? isp.value.data || [] : [];
+  for (const entry of ispData) {
     const periods = [...(entry.periods || [])].sort((a, b) => String(a.metricTime).localeCompare(String(b.metricTime)));
-    for (const p of periods) {
-      const w = p.data?.wan; if (!w) continue;
-      latest.set(`${entry.hostId}:${entry.siteId}`, w);
-      const t = totals.get(p.metricTime) || { down: 0, up: 0 };
-      t.down += num(w.download_kbps) * KBPS_TO_BYTES; t.up += num(w.upload_kbps) * KBPS_TO_BYTES;
-      totals.set(p.metricTime, t);
-    }
+    for (const p of periods) if (p.data?.wan) latest.set(`${entry.hostId}:${entry.siteId}`, p.data.wan);
   }
-  const series = [...totals].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([t, v]) => ({ t, ...v }));
+  const series = toSeries(ispData);
 
   const models = await Promise.all(sites.map(async (s) => {
     const st = s.statistics || {};
@@ -405,6 +431,7 @@ async function loadModels() {
 }
 
 // ---------- demo data ----------
+const demoSeries = (n) => Array.from({ length: n }, (_, i) => ({ t: i, down: 5e6 + 4e6 * Math.sin(i * 288 / n / 20) + Math.random() * 1e6, up: 1e6 + 5e5 * Math.sin(i * 288 / n / 15) + Math.random() * 2e5 }));
 function demoModels() {
   const j = (n) => Math.round(n * (0.8 + Math.random() * 0.4));
   const models = [
@@ -431,12 +458,13 @@ function demoModels() {
         ? [{ name: "WAN", ip, up: true }, { name: "WAN2", ip: `198.51.100.${20 + i}`, up: !bad }]
         : [{ name: "WAN", ip, up: true }] } });
   });
-  const series = Array.from({ length: 288 }, (_, i) => ({ t: i, down: 5e6 + 4e6 * Math.sin(i / 20) + Math.random() * 1e6, up: 1e6 + 5e5 * Math.sin(i / 15) + Math.random() * 2e5 }));
-  return Promise.resolve({ models, series, warnings: [] });
+  return Promise.resolve({ models, series: demoSeries(288), warnings: [] });
 }
 
 // ---------- state & rendering ----------
-const state = { models: [], series: [], warnings: [], updated: null, error: "", busy: false };
+const savedRange = store.get("range", "24h");
+// series is the selected window's data (null while loading); series24 always holds the 24 h data from the last refresh.
+const state = { models: [], series: [], series24: [], range: savedRange in RANGES ? savedRange : "24h", rangeSeq: 0, rangeWarn: "", warnings: [], updated: null, error: "", busy: false };
 
 function spark(series) {
   const n = series[0].length; if (n < 2) return "";
@@ -495,9 +523,10 @@ function render() {
 
   // traffic
   // Total traffic is a quantity: each 5-minute sample's average rate times its length, summed over 24 h.
-  const s = state.series;
-  const downBytes = s.reduce((a, x) => a + x.down, 0) * SAMPLE_SEC, upBytes = s.reduce((a, x) => a + x.up, 0) * SAMPLE_SEC;
-  const partial = s.length && s.length < SAMPLES_24H * 0.9 ? ` · ${s.length} of ${SAMPLES_24H} samples` : "";
+  const R = RANGES[state.range], loading = state.series === null, s = state.series || [];
+  const downBytes = s.reduce((a, x) => a + x.down, 0) * R.sec, upBytes = s.reduce((a, x) => a + x.up, 0) * R.sec;
+  const partial = s.length && s.length < R.n * 0.9 ? ` · ${s.length} of ${R.n} samples` : "";
+  const qty = (v) => (loading ? "…" : s.length ? esc(fmtBytes(v)) : "–");
 
   // Top clients and destinations: only shown when some console actually returned data.
   const label = (m) => m.host || m.name;
@@ -521,11 +550,12 @@ function render() {
       <div class="big">${chip(wanStatus)}</div>
       <div class="note">${lat.length ? `Avg latency ${Math.round(avg(lat))} ms` : "No latency data"}${loss.length ? ` · avg packet loss ${avg(loss).toFixed(1)}%` : ""}</div>
     </section>
-    <section class="card"><h2>Total traffic</h2>
-      <div class="big">${s.length ? esc(fmtBytes(downBytes)) : "–"} <span class="sub">down</span></div>
-      <div class="big" style="font-size:1.4rem">${s.length ? esc(fmtBytes(upBytes)) : "–"} <span class="sub">up</span></div>
+    <section class="card"><h2 class="cols"><span>Total traffic</span><span class="seg" role="group" aria-label="Time range">${
+      Object.entries(RANGES).map(([k, v]) => `<button type="button" data-range="${k}" aria-pressed="${k === state.range}">${v.label}</button>`).join("")}</span></h2>
+      <div class="big">${qty(downBytes)} <span class="sub">down</span></div>
+      <div class="big" style="font-size:1.4rem">${qty(upBytes)} <span class="sub">up</span></div>
       ${spark([s.map((x) => x.down), s.map((x) => x.up)])}
-      <div class="legend"><span class="d">● Download</span><span class="u">● Upload</span><span>Last 24 h${esc(partial)}</span></div>
+      <div class="legend"><span class="d">● Download</span><span class="u">● Upload</span><span>Last ${R.word}${esc(partial)}</span></div>
     </section>
   </div>
 
@@ -561,20 +591,41 @@ function explain(e) {
   return e.message;
 }
 
+function paintBanner() {
+  $("#banner").innerHTML = state.error ? `<div class="banner" role="alert">${esc(state.error)}</div>`
+    : [...state.warnings, state.rangeWarn].filter(Boolean).map((w) => `<div class="banner warn">${esc(w)}</div>`).join("");
+}
+
+// Week / Month / Day switch on the Total traffic card.
+$("#main").addEventListener("click", async (e) => {
+  const range = e.target.closest?.("[data-range]")?.dataset.range;
+  if (!range || !(range in RANGES) || range === state.range) return;
+  state.range = range; store.set("range", range); state.rangeWarn = "";
+  const want = ++state.rangeSeq;
+  state.series = range === "24h" ? state.series24 : null; // null shows a loading state
+  paintBanner(); render();
+  if (range === "24h") return;
+  const rs = await rangeSeries(range).catch((err) => ({ series: [], warning: explain(err) }));
+  if (want !== state.rangeSeq) return; // a newer click superseded this one
+  state.series = rs.series; state.rangeWarn = rs.warning || "";
+  paintBanner(); render();
+});
+
 async function refresh() {
   if (state.busy) return;
   if (!DEMO && !cfg.apiKey) { render(); return; }
   state.busy = true; $("#refresh").disabled = true;
   try {
     const r = await (DEMO ? demoModels() : loadModels());
-    state.models = r.models; state.series = r.series; state.warnings = r.warnings;
+    state.models = r.models; state.series24 = r.series; state.warnings = r.warnings;
+    const rs = await rangeSeries(state.range);
+    state.series = rs.series; state.rangeWarn = rs.warning || "";
     state.updated = new Date(); state.error = "";
   } catch (e) {
     state.error = explain(e);
   } finally {
     state.busy = false; $("#refresh").disabled = false;
-    $("#banner").innerHTML = state.error ? `<div class="banner" role="alert">${esc(state.error)}</div>`
-      : state.warnings.map((w) => `<div class="banner warn">${esc(w)}</div>`).join("");
+    paintBanner();
     $("#updated").textContent = state.updated ? `${DEMO ? "Demo data · " : ""}Updated ${state.updated.toLocaleTimeString()}` : "Not connected";
     render();
   }
@@ -590,8 +641,8 @@ function openSettings() {
 $("#settings").onclick = openSettings;
 $("#cancel").onclick = () => dlg.close();
 $("#clearKey").onclick = () => {
-  ["apiKey", "apiBase", "refreshSec", "ptrLookup", "ptr", "baseUrl"].forEach((k) => store.del(k));
-  cfg.load(); state.models = []; state.series = []; state.warnings = []; state.error = ""; cache.clear();
+  ["apiKey", "apiBase", "refreshSec", "ptrLookup", "ptr", "range", "baseUrl"].forEach((k) => store.del(k));
+  cfg.load(); state.models = []; state.series = []; state.series24 = []; state.range = "24h"; state.rangeWarn = ""; state.warnings = []; state.error = ""; cache.clear();
   $("#banner").innerHTML = ""; dlg.close(); schedule(); render();
 };
 $("#form").addEventListener("submit", () => {
