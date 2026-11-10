@@ -61,10 +61,13 @@
   tr:last-child td { border-bottom: 0; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .tablewrap { overflow-x: auto; }
-  .row { display: flex; justify-content: space-between; align-items: center; gap: .8rem; min-height: 1.7rem; padding: 0 .5rem; margin-bottom: .15rem; border-radius: .3rem;
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) 6rem 6rem; align-items: center; gap: .8rem; min-height: 1.7rem; padding: 0 .5rem; margin-bottom: .15rem; border-radius: .3rem;
     background: linear-gradient(90deg, var(--bar) var(--w), transparent var(--w)); }
   .row .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row .val { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+  .row .val { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; text-align: right; }
+  .card h2.cols { display: flex; justify-content: space-between; align-items: baseline; }
+  .cols .c { display: grid; grid-template-columns: 6rem 6rem; gap: .8rem; padding-right: .5rem; text-align: right; }
+  .cols .d { color: var(--down); } .cols .u { color: var(--up); }
   .legend { display: flex; flex-wrap: wrap; gap: .2rem .9rem; font-size: .85rem; color: var(--muted); margin-top: .3rem; }
   .legend .d { color: var(--down); } .legend .u { color: var(--up); }
   .spark { width: 100%; height: 2.2rem; display: block; margin-top: .25rem; }
@@ -246,8 +249,13 @@ function parseFlows(r) {
     const host = flowKey(f);
     if (!host) continue;
     const t = f.traffic_data || f.traffic || {};
-    const bytes = num(t.total_bytes ?? f.total_bytes) || num(t.bytes_rx) + num(t.bytes_tx) || num(f.bytes);
-    hosts.set(host, (hosts.get(host) || 0) + bytes);
+    // Assumed from the client's side: bytes_rx is data coming down from the destination, bytes_tx is data sent up to it.
+    const rx = t.bytes_rx ?? t.rx_bytes, tx = t.bytes_tx ?? t.tx_bytes;
+    const total = num(t.total_bytes ?? f.total_bytes) || num(rx) + num(tx) || num(f.bytes);
+    const e = hosts.get(host) || { down: 0, up: 0, total: 0, split: false };
+    e.total += total;
+    if (has(rx) || has(tx)) { e.down += num(rx); e.up += num(tx); e.split = true; }
+    hosts.set(host, e);
   }
   return hosts;
 }
@@ -343,10 +351,11 @@ async function resolveIps(ips) {
   store.set(PTR_KEY, JSON.stringify(saved));
   return out;
 }
+const addFlow = (a, b) => a ? { down: a.down + b.down, up: a.up + b.up, total: a.total + b.total, split: a.split || b.split } : { ...b };
 // Replace IP keys in each site's flow map with their hostnames (merging bytes), top IPs only.
 async function resolveFlowIps(models) {
   const ipBytes = new Map();
-  for (const m of models) if (m.flows?.ok) for (const [k, v] of m.flows.value) if (looksLikeIp(k) && !isPrivateIp(k)) ipBytes.set(k, (ipBytes.get(k) || 0) + v);
+  for (const m of models) if (m.flows?.ok) for (const [k, v] of m.flows.value) if (looksLikeIp(k) && !isPrivateIp(k)) ipBytes.set(k, (ipBytes.get(k) || 0) + v.total);
   const top = [...ipBytes].sort((a, b) => b[1] - a[1]).slice(0, PTR_TOP).map(([k]) => k);
   if (!top.length) return;
   const names = await resolveIps(top);
@@ -354,7 +363,7 @@ async function resolveFlowIps(models) {
   for (const m of models) {
     if (!m.flows?.ok) continue;
     const merged = new Map(); // new map: the cached original stays untouched
-    for (const [k, v] of m.flows.value) { const key = names.get(k) || k; merged.set(key, (merged.get(key) || 0) + v); }
+    for (const [k, v] of m.flows.value) { const key = names.get(k) || k; merged.set(key, addFlow(merged.get(key), v)); }
     m.flows = { ok: true, value: merged };
   }
 }
@@ -410,8 +419,8 @@ function demoModels() {
         { name: "Fiber", ip: "203.0.113.7", up: true },
         { name: "LTE backup", ip: "198.51.100.4", up: true }] },
       clients: { ok: true, value: [["Living-Room-TV", 3e10], ["Desktop", 1.4e10], ["Pixel-9", 6e9], ["NAS", 4e9], ["Laptop", 2e9], ["Doorbell", 3e8]]
-        .map(([name, b]) => ({ name, ip: "192.168.1.20", tx_bytes: j(b * 0.2), rx_bytes: j(b * 0.8) })) },
-      flows: { ok: true, value: new Map([["video.example-cdn.net", 12e9], ["api.example.com", 4e9], ["updates.example.org", 2.5e9], ["photos.example.com", 1.8e9], ["chat.example.io", 6e8], ["tiny.example.net", 1e6]].map(([k, v]) => [k, j(v)])) } },
+        .map(([name, b]) => ({ name, ip: "192.168.1.20", tx_bytes: j(b * 0.88), rx_bytes: j(b * 0.12) })) },
+      flows: { ok: true, value: new Map([["video.example-cdn.net", 12e9], ["api.example.com", 4e9], ["updates.example.org", 2.5e9], ["photos.example.com", 1.8e9], ["chat.example.io", 6e8], ["tiny.example.net", 1e6]].map(([k, v]) => { const t = j(v); return [k, { down: Math.round(t * 0.9), up: Math.round(t * 0.1), total: t, split: true }]; })) } },
     { id: "b", name: "Cabin", host: "Cloud Gateway Max", isp: "Example Cable", counts: { totalDevice: 4, offlineDevice: 1, wifiClient: 5, wiredClient: 1, criticalNotification: 1 },
       issues: [{}], wanUptime: 97.4, wan: { avgLatency: j(48), packetLoss: 3.1, downtime: 120, uptime: 3480 }, health: "warning", wanStatus: "warning", down: j(1e6), up: j(2e5),
       wans: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") } },
@@ -443,13 +452,19 @@ function spark(series) {
 }
 
 const TOP_N = 5;
-function clientBytes(c) {
-  return num(c.tx_bytes) + num(c.rx_bytes) || num(c["wired-tx_bytes"]) + num(c["wired-rx_bytes"]);
+// UniFi counts client bytes from the access point or switch side: tx_bytes is data sent to the client
+// (its download) and rx_bytes is data received from it (its upload).
+function clientSplit(c) {
+  const wired = !num(c.tx_bytes) && !num(c.rx_bytes);
+  const down = num(wired ? c["wired-tx_bytes"] : c.tx_bytes), up = num(wired ? c["wired-rx_bytes"] : c.rx_bytes);
+  return { down, up, total: down + up, split: true };
 }
 function list(items) {
-  const max = Math.max(1, ...items.map((i) => i.bytes));
-  return items.map((i) => `<div class="row" style="--w:${(i.bytes / max * 100).toFixed(1)}%"><div class="title">${esc(i.title)}${i.meta ? ` <span class="sub">${esc(i.meta)}</span>` : ""}</div>
-    <div class="val">${esc(fmtBytes(i.bytes))}</div></div>`).join("");
+  const max = Math.max(1, ...items.map((i) => i.total));
+  const size = (i, v) => (i.split ? esc(fmtBytes(v)) : "–");
+  return items.map((i) =>
+    `<div class="row" style="--w:${(i.total / max * 100).toFixed(1)}%"><div class="title">${esc(i.title)}${i.meta ? ` <span class="sub">${esc(i.meta)}</span>` : ""}</div>
+    <div class="val">${size(i, i.down)}</div><div class="val">${size(i, i.up)}</div></div>`).join("");
 }
 
 // One entry per WAN. Falls back to a single site-level line from the cloud ISP metrics.
@@ -491,12 +506,13 @@ function render() {
   // Top clients and destinations: only shown when some console actually returned data.
   const label = (m) => m.host || m.name;
   const topClients = M.flatMap((m) => (m.clients?.ok ? m.clients.value : []).map((c) => ({
-    title: c.name || c.hostname || c.mac || "Unknown", meta: M.length > 1 ? label(m) : "", bytes: clientBytes(c) })))
-    .filter((x) => x.bytes > 0).sort((a, b) => b.bytes - a.bytes).slice(0, TOP_N);
+    title: c.name || c.hostname || c.mac || "Unknown", meta: M.length > 1 ? label(m) : "", ...clientSplit(c) })))
+    .filter((x) => x.total > 0).sort((a, b) => b.total - a.total).slice(0, TOP_N);
   const dest = new Map();
-  for (const m of M) if (m.flows?.ok) for (const [k, v] of m.flows.value) dest.set(k, (dest.get(k) || 0) + v);
-  const topDest = [...dest].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, TOP_N).map(([k, v]) => ({ title: k, meta: "", bytes: v }));
-  const topCard = (title, items) => items.length ? `<section class="card"><h2>${title}</h2>${list(items)}</section>` : "";
+  for (const m of M) if (m.flows?.ok) for (const [k, v] of m.flows.value) dest.set(k, addFlow(dest.get(k), v));
+  const topDest = [...dest].filter(([, v]) => v.total > 0).sort((a, b) => b[1].total - a[1].total).slice(0, TOP_N).map(([k, v]) => ({ title: k, meta: "", ...v }));
+  const topCard = (title, items) => items.length
+    ? `<section class="card"><h2 class="cols"><span>${title}</span><span class="c"><span class="d">Down</span><span class="u">Up</span></span></h2>${list(items)}</section>` : "";
 
   main.innerHTML = `
   <div class="grid3">
