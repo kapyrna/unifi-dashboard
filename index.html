@@ -19,56 +19,62 @@
       --accent: #6f9bff; --down: #6f9bff; --up: #f08a5d;
     }
   }
+  /* Everything is sized in rem so it scales with the screen: about 19px at 1920 wide, 32px at 4K. */
+  html { font-size: clamp(16px, 1vw, 32px); }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
-    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  .wrap { max-width: 1900px; margin: 0 auto; padding: 10px 16px; }
-  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-  h1 { font-size: 18px; margin: 0; }
-  .sub { color: var(--muted); font-size: 12px; }
-  .actions { display: flex; gap: 8px; align-items: center; }
-  button { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line);
-    border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+    font: 1rem/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: none; margin: 0 auto; padding: .6rem 1rem; }
+  header { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; margin-bottom: .6rem; }
+  h1 { font-size: 1.5rem; margin: 0; }
+  .sub { color: var(--muted); font-size: .85em; }
+  .actions { display: flex; gap: .5rem; align-items: center; }
+  button { font: inherit; font-size: .9rem; color: var(--text); background: var(--card); border: 1px solid var(--line);
+    border-radius: .5rem; padding: .35rem .8rem; cursor: pointer; }
   button:hover { border-color: var(--accent); }
   button:disabled { opacity: .6; cursor: default; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .grid3 { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 10px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-width: 0; }
-  .card h2 { margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
-  .big { font-size: 20px; font-weight: 650; line-height: 1.2; }
-  .note { color: var(--muted); font-size: 12px; margin-top: 4px; }
-  .chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
-  .chip i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .grid3 { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); margin-bottom: .6rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: .7rem 1rem; min-width: 0; }
+  .card h2 { margin: 0 0 .35rem; font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .big { font-size: 2.1rem; font-weight: 650; line-height: 1.15; }
+  .big .chip { font-size: .75em; padding: .1rem .8rem; }
+  .note { color: var(--muted); font-size: .85rem; margin-top: .3rem; }
+  .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .1rem .6rem; border-radius: 999px; font-size: .9rem; font-weight: 600; white-space: nowrap; }
+  .chip i { width: .55em; height: .55em; border-radius: 50%; background: currentColor; }
   .chip.ok { color: var(--ok); background: var(--ok-bg); }
   .chip.warning { color: var(--warn); background: var(--warn-bg); }
   .chip.error { color: var(--err); background: var(--err-bg); }
   .chip.unknown { color: var(--unk); background: var(--unk-bg); }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .4rem; }
+  .chips .chip { font-size: .95rem; }
   table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 2px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th, td { text-align: left; padding: .15rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td { font-size: 1.1rem; }
   tbody tr:hover { background: var(--bg); }
-  .wl { display: flex; align-items: center; gap: 6px; min-height: 24px; white-space: nowrap; }
+  .wl { display: flex; align-items: center; gap: .4rem; min-height: 1.75rem; white-space: nowrap; }
   .wl.r { justify-content: flex-end; }
-  th { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .wl .chip { font-size: .85rem; }
+  th { font-size: .85rem; font-weight: 600; color: var(--muted); }
   tr:last-child td { border-bottom: 0; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .tablewrap { overflow-x: auto; }
-  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend { display: flex; flex-wrap: wrap; gap: .2rem .9rem; font-size: .85rem; color: var(--muted); margin-top: .3rem; }
   .legend .d { color: var(--down); } .legend .u { color: var(--up); }
-  .spark { width: 100%; height: 32px; display: block; margin-top: 4px; }
+  .spark { width: 100%; height: 2.2rem; display: block; margin-top: .25rem; }
   .spark .d { stroke: var(--down); } .spark .u { stroke: var(--up); }
-  .banner { border: 1px solid var(--err); background: var(--err-bg); color: var(--err); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; }
+  .banner { border: 1px solid var(--err); background: var(--err-bg); color: var(--err); border-radius: .6rem; padding: .6rem .9rem; margin-bottom: .6rem; }
   .banner.warn { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
-  .empty { text-align: center; padding: 48px 16px; color: var(--muted); }
-  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--text); padding: 20px; width: min(460px, 92vw); }
+  .empty { text-align: center; padding: 3rem 1rem; color: var(--muted); }
+  dialog { border: 1px solid var(--line); border-radius: .8rem; background: var(--card); color: var(--text); padding: 1.2rem; width: min(30rem, 92vw); }
   dialog::backdrop { background: rgba(0,0,0,.45); }
-  label { display: block; margin: 12px 0 4px; font-weight: 600; font-size: 13px; }
-  input { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
-  details { margin-top: 12px; }
-  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-  .dlg-actions { display: flex; gap: 8px; justify-content: space-between; margin-top: 18px; }
-  .dlg-actions div { display: flex; gap: 8px; }
-  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  label { display: block; margin: .8rem 0 .25rem; font-weight: 600; font-size: .9rem; }
+  input { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: .5rem; padding: .5rem .6rem; }
+  details { margin-top: .8rem; }
+  summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+  .dlg-actions { display: flex; gap: .5rem; justify-content: space-between; margin-top: 1.2rem; }
+  .dlg-actions div { display: flex; gap: .5rem; }
+  .hint { font-size: .8rem; color: var(--muted); margin-top: .25rem; }
 </style>
 </head>
 <body>
@@ -199,8 +205,6 @@ function parseWans(devices) {
       return {
         name: w.name || w.ifname || k.toUpperCase(), ip: w.ip || "", enabled: w.enable !== false,
         up: w.up === undefined ? undefined : !!w.up,
-        down: has(w["rx_bytes-r"]) ? +w["rx_bytes-r"] : undefined,
-        upRate: has(w["tx_bytes-r"]) ? +w["tx_bytes-r"] : undefined,
       };
     })
     .filter((w) => w.enabled);
@@ -289,8 +293,8 @@ function demoModels() {
     { id: "a", name: "Home", host: "Dream Machine Pro", isp: "Example Fiber", counts: { totalDevice: 9, offlineDevice: 0, wifiClient: 31, wiredClient: 12, criticalNotification: 0 },
       issues: [], wanUptime: 100, wan: { avgLatency: j(9), packetLoss: 0 }, health: "ok", wanStatus: "ok", down: j(7e6), up: j(9e5),
       wans: { ok: true, value: [
-        { name: "Fiber", ip: "203.0.113.7", up: true, down: j(6e6), upRate: j(8e5) },
-        { name: "LTE backup", ip: "198.51.100.4", up: true, down: j(1e5), upRate: j(2e4) }] } },
+        { name: "Fiber", ip: "203.0.113.7", up: true },
+        { name: "LTE backup", ip: "198.51.100.4", up: true }] } },
     { id: "b", name: "Cabin", host: "Cloud Gateway Max", isp: "Example Cable", counts: { totalDevice: 4, offlineDevice: 1, wifiClient: 5, wiredClient: 1, criticalNotification: 1 },
       issues: [{}], wanUptime: 97.4, wan: { avgLatency: j(48), packetLoss: 3.1, downtime: 120, uptime: 3480 }, health: "warning", wanStatus: "warning", down: j(1e6), up: j(2e5),
       wans: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") } },
@@ -303,8 +307,8 @@ function demoModels() {
       issues: bad ? [{}] : [], wanUptime: bad ? 99.1 : 100, wan: { avgLatency: j(12 + i * 5), packetLoss: bad ? 2.5 : 0 },
       health: bad ? "warning" : "ok", wanStatus: bad ? "warning" : "ok", down: j(3e6), up: j(4e5),
       wans: { ok: true, value: wanCount === 2
-        ? [{ name: "WAN", ip, up: true, down: j(3e6), upRate: j(4e5) }, { name: "WAN2", ip: `198.51.100.${20 + i}`, up: !bad, down: j(2e5), upRate: j(5e4) }]
-        : [{ name: "WAN", ip, up: true, down: j(3e6), upRate: j(4e5) }] } });
+        ? [{ name: "WAN", ip, up: true }, { name: "WAN2", ip: `198.51.100.${20 + i}`, up: !bad }]
+        : [{ name: "WAN", ip, up: true }] } });
   });
   const series = Array.from({ length: 288 }, (_, i) => ({ t: i, down: 5e6 + 4e6 * Math.sin(i / 20) + Math.random() * 1e6, up: 1e6 + 5e5 * Math.sin(i / 15) + Math.random() * 2e5 }));
   return Promise.resolve({ models, series, warnings: [] });
@@ -324,8 +328,8 @@ function spark(series) {
 // One entry per WAN. Falls back to a single site-level line from the cloud ISP metrics.
 function wanLines(m) {
   const ws = m.wans?.ok && m.wans.value.length ? m.wans.value : null;
-  if (!ws) return [{ name: "WAN", ip: "", status: m.wanStatus, down: m.down, up: m.up }];
-  return ws.map((w) => ({ name: w.name, ip: w.ip, status: w.up === undefined ? "unknown" : w.up ? "ok" : "error", down: w.down, up: w.upRate }));
+  if (!ws) return [{ name: "WAN", ip: "", status: m.wanStatus }];
+  return ws.map((w) => ({ name: w.name, ip: w.ip, status: w.up === undefined ? "unknown" : w.up ? "ok" : "error" }));
 }
 
 function render() {
@@ -370,7 +374,7 @@ function render() {
     </section>
     <section class="card"><h2>Total traffic</h2>
       <div class="big">${esc(fmtRate(down))} <span class="sub">down</span></div>
-      <div class="big" style="font-size:15px">${esc(fmtRate(up))} <span class="sub">up</span></div>
+      <div class="big" style="font-size:1.4rem">${esc(fmtRate(up))} <span class="sub">up</span></div>
       ${spark([s.map((x) => x.down), s.map((x) => x.up)])}
       <div class="legend"><span class="d">● Download</span><span class="u">● Upload</span><span>Last 24 h${s.length ? ` · peak ${esc(fmtRate(peakDown))} down` : ""}</span></div>
     </section>
@@ -378,17 +382,15 @@ function render() {
 
   <section class="card"><h2>Sites</h2>
     <div class="tablewrap"><table>
-      <thead><tr><th>Site</th><th>Health</th><th>WAN</th><th class="num">Down</th><th class="num">Up</th><th>ISP</th><th class="num">WAN uptime</th><th class="num">Latency</th><th class="num">Loss</th><th class="num">Devices</th><th class="num">Clients</th></tr></thead>
+      <thead><tr><th>Site</th><th>Health</th><th>WAN</th><th>ISP</th><th class="num">WAN uptime</th><th class="num">Latency</th><th class="num">Loss</th><th class="num">Devices</th><th class="num">Clients</th></tr></thead>
       <tbody>${M.map((m) => {
         const lines = wanLines(m);
         const isDefault = /^default$/i.test(m.name); // single-site consoles: show the console name instead
         const one = (html, r) => `<div class="wl${r ? " r" : ""}">${html}</div>`;
         return `<tr>
-        <td>${one(esc(isDefault && m.host ? m.host : m.name))}${!isDefault && m.host ? `<div class="meta sub">${esc(m.host)}</div>` : ""}</td>
+        <td>${one(`${esc(isDefault && m.host ? m.host : m.name)}${!isDefault && m.host ? ` <span class="sub">${esc(m.host)}</span>` : ""}`)}</td>
         <td>${one(chip(m.health))}</td>
         <td>${lines.map((l) => one(`${chip(l.status)}${/^wan$/i.test(l.name) ? "" : ` ${esc(l.name)}`}${l.ip ? ` <span class="sub">${esc(l.ip)}</span>` : ""}`)).join("")}</td>
-        <td class="num">${lines.map((l) => one(has(l.down) ? esc(fmtRate(l.down)) : "–", true)).join("")}</td>
-        <td class="num">${lines.map((l) => one(has(l.up) ? esc(fmtRate(l.up)) : "–", true)).join("")}</td>
         <td>${one(esc(m.isp || "–"))}</td>
         <td class="num">${one(has(m.wanUptime) ? `${(+m.wanUptime).toFixed(2)}%` : "–", true)}</td>
         <td class="num">${one(has(m.wan?.avgLatency) ? `${Math.round(m.wan.avgLatency)} ms` : "–", true)}</td>
@@ -397,7 +399,7 @@ function render() {
         <td class="num">${one(String(num(m.counts.wifiClient) + num(m.counts.wiredClient)), true)}</td></tr>`;
       }).join("")}
       </tbody></table></div>
-    <div class="note">Health is derived from offline devices, critical alerts and reported internet issues. Each WAN gets its own line when the gateway reports it through the console connector; otherwise one line shows the latest 5-minute ISP sample. Uptime, latency and loss are per site.</div>
+    <div class="note">Down if a gateway is offline; Degraded if any device is offline or there are critical alerts or internet issues. Uptime, latency and loss are per site; each WAN line comes from the gateway when available.</div>
   </section>`;
 }
 

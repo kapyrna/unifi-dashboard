@@ -24,7 +24,7 @@ Add `?demo=1` to the URL to preview the page with sample data.
 | --- | --- |
 | Overall health, devices, clients | `GET /v1/sites` (counts, internet issues, WAN uptime), `GET /v1/hosts` for console names |
 | WAN health, total traffic | `GET /v1/isp-metrics/5m?duration=24h` (latency, packet loss, throughput) |
-| Per-WAN lines (name, IP, link state, rates) | Console connector, gateway device (see below). Falls back to one line from the ISP metrics |
+| Per-WAN lines (name, IP, link state) | Console connector, gateway device (see below). Falls back to one line from the ISP metrics |
 
 Site health is derived: Down if a gateway is offline, Degraded if any device is offline or there are critical alerts or internet issues, otherwise Healthy.
 
