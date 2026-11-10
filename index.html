@@ -33,7 +33,6 @@
   button:disabled { opacity: .6; cursor: default; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .grid3 { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 12px; }
-  .grid2 { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
   .card h2 { margin: 0 0 10px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
   .big { font-size: 26px; font-weight: 650; line-height: 1.2; }
@@ -53,13 +52,6 @@
   tr:last-child td { border-bottom: 0; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .tablewrap { overflow-x: auto; }
-  .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
-  .row:last-child { border-bottom: 0; }
-  .row .title { font-weight: 550; overflow-wrap: anywhere; }
-  .row .meta { color: var(--muted); font-size: 12px; }
-  .row .val { font-variant-numeric: tabular-nums; font-weight: 550; text-align: right; }
-  .bar { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--unk-bg); overflow: hidden; }
-  .bar b { display: block; height: 100%; background: var(--accent); }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .legend .d { color: var(--down); } .legend .u { color: var(--up); }
   .spark { width: 100%; height: 48px; display: block; margin-top: 8px; }
@@ -145,11 +137,6 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const num = (v) => (Number.isFinite(+v) ? +v : 0);
 const has = (v) => v !== null && v !== undefined && Number.isFinite(+v);
-function fmtBytes(n) {
-  const u = ["B", "kB", "MB", "GB", "TB", "PB"]; let i = 0; n = num(n);
-  while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
-  return `${i === 0 || n >= 100 ? n.toFixed(0) : n.toFixed(1)} ${u[i]}`;
-}
 function fmtRate(bytesPerSec) {
   const u = ["bps", "kbps", "Mbps", "Gbps"]; let i = 0; let n = num(bytesPerSec) * 8;
   while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
@@ -200,20 +187,6 @@ function cached(key, fn) {
   return p;
 }
 
-function parseFlows(r) {
-  const rows = Array.isArray(r) ? r : r.data || r.flows || [];
-  const hosts = new Map();
-  for (const f of rows) {
-    const d = f.destination || {};
-    const host = d.domain || d.hostname || d.name || f.destination_domain || d.ip || f.destination_ip;
-    if (!host) continue;
-    const t = f.traffic_data || f.traffic || {};
-    const bytes = num(t.total_bytes ?? f.total_bytes) || num(t.bytes_rx) + num(t.bytes_tx) || num(f.bytes);
-    hosts.set(host, (hosts.get(host) || 0) + bytes);
-  }
-  return hosts;
-}
-
 // Multi-WAN: the gateway device reports one object per WAN (wan1, wan2, ...).
 function parseWans(devices) {
   const isWan = (k) => /^wan\d+$/.test(k);
@@ -232,23 +205,11 @@ function parseWans(devices) {
     .filter((w) => w.enabled);
 }
 
-// Per-client traffic and destination hostnames are not in the Site Manager cloud API.
-// Best effort: reach the console's local Network API through the cloud connector.
-async function loadConnector(site) {
-  const conn = (p, init) => api(`/v1/connector/consoles/${encodeURIComponent(site.hostId)}/${p}`, init);
-  const ref = "default"; // assumes one site per console
-  const [clients, flows, wans] = await Promise.all([
-    cached(`sta:${site.hostId}:${ref}`, () => conn(`network/api/s/${ref}/stat/sta`).then((r) => r.data || [])),
-    cached(`flows:${site.hostId}:${ref}`, () => {
-      const to = Date.now(), from = to - 24 * 3600 * 1000;
-      return conn(`network/v2/api/site/${ref}/traffic-flows`, {
-        method: "POST",
-        body: JSON.stringify({ timestampFrom: from, timestampTo: to, pageNumber: 0, pageSize: 1000, skip: 0, limit: 1000 }),
-      }).then(parseFlows);
-    }),
-    cached(`dev:${site.hostId}`, () => conn(`network/api/s/${ref}/stat/device`).then((r) => parseWans(r.data || []))),
-  ]);
-  return { clients, flows, wans };
+// Per-WAN detail is not in the Site Manager cloud API. Best effort: read the gateway from the
+// console's local Network API through the cloud connector (assumes one site per console).
+function loadWans(site) {
+  return cached(`dev:${site.hostId}`, () =>
+    api(`/v1/connector/consoles/${encodeURIComponent(site.hostId)}/network/api/s/default/stat/device`).then((r) => parseWans(r.data || [])));
 }
 
 // ---------- health rules (derived from cloud statistics) ----------
@@ -307,14 +268,14 @@ async function loadModels() {
   const models = await Promise.all(sites.map(async (s) => {
     const st = s.statistics || {};
     const w = latest.get(`${s.hostId}:${s.siteId}`);
-    const conn = await loadConnector(s);
+    const wans = await loadWans(s);
     return {
       id: s.siteId, name: s.meta?.name || s.siteId, host: hostById.get(s.hostId) || "",
       isp: st.ispInfo?.name || "", counts: st.counts || {}, issues: st.internetIssues || [],
       wanUptime: st.percentages?.wanUptime, wan: w,
-      health: siteHealth(st), wanStatus: combineWan(wanHealth(st, w), conn.wans),
+      health: siteHealth(st), wanStatus: combineWan(wanHealth(st, w), wans),
       down: w ? num(w.download_kbps) * KBPS_TO_BYTES : 0, up: w ? num(w.upload_kbps) * KBPS_TO_BYTES : 0,
-      clients: conn.clients, flows: conn.flows, wans: conn.wans,
+      wans,
     };
   }));
   return { models, series, warnings };
@@ -323,21 +284,15 @@ async function loadModels() {
 // ---------- demo data ----------
 function demoModels() {
   const j = (n) => Math.round(n * (0.8 + Math.random() * 0.4));
-  const clients = (names) => ({ ok: true, value: names.map((n, i) => ({
-    name: n, ip: `192.168.1.${20 + i}`, tx_bytes: j(9e9 / (i + 1)), rx_bytes: j(3e10 / (i + 1)) })) });
-  const flows = (o) => ({ ok: true, value: new Map(Object.entries(o).map(([k, v]) => [k, j(v)])) });
   const models = [
     { id: "a", name: "Home", host: "Dream Machine Pro", isp: "Example Fiber", counts: { totalDevice: 9, offlineDevice: 0, wifiClient: 31, wiredClient: 12, criticalNotification: 0 },
       issues: [], wanUptime: 100, wan: { avgLatency: j(9), packetLoss: 0 }, health: "ok", wanStatus: "ok", down: j(7e6), up: j(9e5),
       wans: { ok: true, value: [
         { name: "Fiber", ip: "203.0.113.7", up: true, down: j(6e6), upRate: j(8e5) },
-        { name: "LTE backup", ip: "198.51.100.4", up: true, down: j(1e5), upRate: j(2e4) }] },
-      clients: clients(["Living-Room-TV", "Desktop", "Pixel-9", "NAS", "Laptop"]),
-      flows: flows({ "video.example-cdn.net": 12e9, "api.example.com": 4e9, "updates.example.org": 2.5e9, "photos.example.com": 1.8e9 }) },
+        { name: "LTE backup", ip: "198.51.100.4", up: true, down: j(1e5), upRate: j(2e4) }] } },
     { id: "b", name: "Cabin", host: "Cloud Gateway Max", isp: "Example Cable", counts: { totalDevice: 4, offlineDevice: 1, wifiClient: 5, wiredClient: 1, criticalNotification: 1 },
       issues: [{}], wanUptime: 97.4, wan: { avgLatency: j(48), packetLoss: 3.1, downtime: 120, uptime: 3480 }, health: "warning", wanStatus: "warning", down: j(1e6), up: j(2e5),
-      wans: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") },
-      clients: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") }, flows: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") } },
+      wans: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") } },
   ];
   const series = Array.from({ length: 288 }, (_, i) => ({ t: i, down: 5e6 + 4e6 * Math.sin(i / 20) + Math.random() * 1e6, up: 1e6 + 5e5 * Math.sin(i / 15) + Math.random() * 2e5 }));
   return Promise.resolve({ models, series, warnings: [] });
@@ -352,17 +307,6 @@ function spark(series) {
   const line = (vals, cls) => `<polyline class="${cls}" fill="none" stroke-width="2" vector-effect="non-scaling-stroke" points="${
     vals.map((v, i) => `${((i / (n - 1)) * w).toFixed(1)},${(h - 2 - (v / max) * (h - 4)).toFixed(1)}`).join(" ")}"/>`;
   return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Last 24 hours of WAN traffic">${line(series[0], "d")}${line(series[1], "u")}</svg>`;
-}
-
-function clientBytes(c) {
-  return num(c.tx_bytes) + num(c.rx_bytes) || num(c["wired-tx_bytes"]) + num(c["wired-rx_bytes"]);
-}
-
-function list(items, emptyText) {
-  if (!items.length) return `<div class="sub">${esc(emptyText)}</div>`;
-  const max = Math.max(1, ...items.map((i) => i.bytes));
-  return items.map((i) => `<div class="row"><div><div class="title">${esc(i.title)}</div>${i.meta ? `<div class="meta">${esc(i.meta)}</div>` : ""}</div>
-    <div class="val">${esc(fmtBytes(i.bytes))}</div><div class="bar"><b style="width:${(i.bytes / max * 100).toFixed(1)}%"></b></div></div>`).join("");
 }
 
 // One entry per WAN. Falls back to a single site-level line from the cloud ISP metrics.
@@ -381,7 +325,6 @@ function render() {
   }
   const M = state.models;
   if (!M.length) { main.innerHTML = `<div class="card empty">${state.busy ? "Loading…" : "No sites found for this API key."}</div>`; return; }
-  const multi = M.length > 1;
   const sum = (f) => M.reduce((a, m) => a + num(f(m)), 0);
 
   // overall health
@@ -401,22 +344,6 @@ function render() {
   const down = sum((m) => m.down), up = sum((m) => m.up);
   const s = state.series;
   const peakDown = s.length ? Math.max(...s.map((x) => x.down)) : 0;
-
-  // top clients
-  const clientErrs = M.filter((m) => !m.clients.ok);
-  const clients = M.flatMap((m) => (m.clients.ok ? m.clients.value.map((c) => ({ c, site: m.name })) : []))
-    .map((x) => ({ title: x.c.name || x.c.hostname || x.c.mac || "Unknown", meta: [x.c.ip, multi ? x.site : ""].filter(Boolean).join(" · "), bytes: clientBytes(x.c) }))
-    .sort((a, b) => b.bytes - a.bytes).slice(0, 10);
-
-  // top destinations
-  const flowErrs = M.filter((m) => !m.flows.ok);
-  const dest = new Map();
-  for (const m of M) if (m.flows.ok) for (const [k, v] of m.flows.value) dest.set(k, (dest.get(k) || 0) + v);
-  const topDest = [...dest].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, v]) => ({ title: k, meta: "", bytes: v }));
-
-  const unavailable = (errs, what) => errs.length === M.length
-    ? `${what} isn't in the Site Manager cloud API. This page tries the console connector (console firmware 5.0.3 or later, owner or admin key), which failed: ${errs[0].clients?.error?.message || errs[0].flows?.error?.message}`
-    : `${what} unavailable for ${errs.length} of ${M.length} sites.`;
 
   main.innerHTML = `
   <div class="grid3">
@@ -458,18 +385,7 @@ function render() {
       }).join("")}
       </tbody></table></div>
     <div class="note">Health is derived from offline devices, critical alerts and reported internet issues. Each WAN gets its own line when the gateway reports it through the console connector; otherwise one line shows the latest 5-minute ISP sample. Uptime, latency and loss are per site.</div>
-  </section>
-
-  <div class="grid2">
-    <section class="card"><h2>Top clients</h2>
-      ${list(clients, "No client data.")}
-      <div class="note">${clientErrs.length ? esc(unavailable(clientErrs, "Per-client traffic")) : "Cumulative bytes for currently connected clients."}</div>
-    </section>
-    <section class="card"><h2>Top destination hostnames</h2>
-      ${list(topDest, "No flows recorded.")}
-      <div class="note">${flowErrs.length ? esc(unavailable(flowErrs, "Destination hostnames")) : "Last 24 hours, from the console's traffic flows."}</div>
-    </section>
-  </div>`;
+  </section>`;
 }
 
 function explain(e) {
