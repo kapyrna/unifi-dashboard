@@ -6,7 +6,7 @@ A single-file static page (`index.html`) that shows UniFi health and traffic acr
 - WAN health (per site and combined)
 - Total traffic (latest WAN rate, plus a 24 h sparkline)
 - A per-site table, with one line per WAN when a site has several
-- Top clients and top destinations, only when at least one console returns that data
+- Top clients and top destinations (by hostname), below the sites list, only when at least one console returns that data
 
 No build step. Open `index.html` in a browser or host it on any static server.
 
@@ -26,7 +26,7 @@ Add `?demo=1` to the URL to preview the page with sample data.
 | Overall health, devices, clients | `GET /v1/sites` (counts, internet issues, WAN uptime), `GET /v1/hosts` for console names |
 | WAN health, total traffic | `GET /v1/isp-metrics/5m?duration=24h` (latency, packet loss, throughput) |
 | Per-WAN lines (name, IP, link state) | Console connector, gateway device (see below). Falls back to one line from the ISP metrics |
-| Top clients, top destinations (cards shown only if data exists) | Console connector: client list and traffic flows from the last 24 h (see below) |
+| Top clients, top destinations (cards shown only if data exists) | Console connector: client list and traffic flows from the last 24 h. Destinations are hostnames only; flows with just an IP are skipped (see below) |
 
 Site health is derived: Down if a gateway is offline, Degraded if any device is offline or there are critical alerts or internet issues, otherwise Healthy.
 
