@@ -187,6 +187,11 @@ async function api(path, init = {}) {
   if (!res.ok) {
     const e = new Error(`${res.status} ${res.statusText} (${path.split("?")[0]})`);
     e.status = res.status; e.retryAfter = res.headers.get("retry-after"); e.brief = `${res.status} ${res.statusText}`.trim();
+    try { // the response body often says who refused the request and why
+      const t = (await res.text()).slice(0, 400); let m = t;
+      try { const j = JSON.parse(t); m = j.message || j.error?.message || j.meta?.msg || j.msg || j.error || j.code || t; } catch {}
+      e.detail = String(typeof m === "string" ? m : JSON.stringify(m)).replace(/\s+/g, " ").trim().slice(0, 140);
+    } catch {}
     throw e;
   }
   return res.json();
@@ -307,16 +312,18 @@ const briefError = (e) => e?.brief || (e instanceof TypeError ? "network error" 
 
 // Why per-WAN lines, clients or destinations are missing: online consoles whose connector calls failed.
 function detailIssues(models) {
-  return models.filter((m) => !m.offline).map((m) => ({
-    m, errs: [["WANs", m.wans], ["clients", m.clients], ["destinations", m.flows]].filter(([, r]) => r && !r.ok).map(([what, r]) => `${what}: ${briefError(r.error)}`),
-  })).filter((x) => x.errs.length);
+  return models.filter((m) => !m.offline).map((m) => {
+    const failed = [["WANs", m.wans], ["clients", m.clients], ["destinations", m.flows]].filter(([, r]) => r && !r.ok);
+    return { m, brief: failed.length ? briefError(failed[0][1].error) : "",
+      errs: failed.map(([what, r]) => `${what}: ${briefError(r.error)}${r.error?.detail ? ` (${r.error.detail})` : ""}`) };
+  }).filter((x) => x.errs.length);
 }
 function paintUpdated() {
   const el = $("#updated");
   let text = state.updated ? `${DEMO ? "Demo data · " : ""}Updated ${state.updated.toLocaleTimeString()}` : "Not connected", tip = "";
   const bad = detailIssues(state.models);
   if (bad.length) {
-    const first = bad[0].errs[0].split(": ")[1];
+    const first = bad[0].brief;
     const total = state.models.filter((m) => !m.offline).length;
     text += ` · console details unavailable for ${bad.length} of ${total} console${total === 1 ? "" : "s"} (${first})`;
     tip = "Details come from each console through the Site Manager connector, which may need the console owner's key (an admin account might not be enough).\n" + bad.map((x) => `${siteLabel(x.m)}: ${x.errs.join("; ")}`).join("\n");
