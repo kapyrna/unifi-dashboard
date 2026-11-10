@@ -464,7 +464,6 @@ function render() {
         <td class="num">${one(String(num(m.counts.wifiClient) + num(m.counts.wiredClient)), true)}</td></tr>`;
       }).join("")}
       </tbody></table></div>
-    <div class="note">Down if a gateway is offline; Degraded if any device is offline or there are critical alerts or internet issues. Uptime, latency and loss are per site; each WAN line comes from the gateway when available.</div>
   </section>${topClients.length || topDest.length ? `<div class="grid2">${topCard("Top clients", topClients)}${topCard("Top destinations", topDest)}</div>` : ""}`;
 }
 
