@@ -21,10 +21,10 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
-    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
-  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-  h1 { font-size: 20px; margin: 0; }
+    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1900px; margin: 0 auto; padding: 10px 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  h1 { font-size: 18px; margin: 0; }
   .sub { color: var(--muted); font-size: 12px; }
   .actions { display: flex; gap: 8px; align-items: center; }
   button { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line);
@@ -32,21 +32,22 @@
   button:hover { border-color: var(--accent); }
   button:disabled { opacity: .6; cursor: default; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .grid3 { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 12px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
-  .card h2 { margin: 0 0 10px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
-  .big { font-size: 26px; font-weight: 650; line-height: 1.2; }
-  .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
-  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .grid3 { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 10px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-width: 0; }
+  .card h2 { margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .big { font-size: 20px; font-weight: 650; line-height: 1.2; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
   .chip i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
   .chip.ok { color: var(--ok); background: var(--ok-bg); }
   .chip.warning { color: var(--warn); background: var(--warn-bg); }
   .chip.error { color: var(--err); background: var(--err-bg); }
   .chip.unknown { color: var(--unk); background: var(--unk-bg); }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  .wl { display: flex; align-items: center; gap: 6px; min-height: 28px; white-space: nowrap; }
+  th, td { text-align: left; padding: 2px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr:hover { background: var(--bg); }
+  .wl { display: flex; align-items: center; gap: 6px; min-height: 24px; white-space: nowrap; }
   .wl.r { justify-content: flex-end; }
   th { font-size: 12px; font-weight: 600; color: var(--muted); }
   tr:last-child td { border-bottom: 0; }
@@ -54,7 +55,7 @@
   .tablewrap { overflow-x: auto; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .legend .d { color: var(--down); } .legend .u { color: var(--up); }
-  .spark { width: 100%; height: 48px; display: block; margin-top: 8px; }
+  .spark { width: 100%; height: 32px; display: block; margin-top: 4px; }
   .spark .d { stroke: var(--down); } .spark .u { stroke: var(--up); }
   .banner { border: 1px solid var(--err); background: var(--err-bg); color: var(--err); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; }
   .banner.warn { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
@@ -294,6 +295,17 @@ function demoModels() {
       issues: [{}], wanUptime: 97.4, wan: { avgLatency: j(48), packetLoss: 3.1, downtime: 120, uptime: 3480 }, health: "warning", wanStatus: "warning", down: j(1e6), up: j(2e5),
       wans: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") } },
   ];
+  const extra = [["Office", "Cloud Gateway Fiber", 1], ["Warehouse", "UDM SE", 2], ["Shop", "UCG Ultra", 1], ["Studio", "Dream Router", 1], ["Default", "UDR 5G Max", 1], ["Lake House", "UDM Pro Max", 2]];
+  extra.forEach(([name, host, wanCount], i) => {
+    const bad = i === 2, ip = `203.0.113.${20 + i}`;
+    models.push({ id: `x${i}`, name, host, isp: ["Example Fiber", "Example Cable", "Example DSL"][i % 3],
+      counts: { totalDevice: 3 + i, offlineDevice: bad ? 1 : 0, wifiClient: 8 + i * 3, wiredClient: 2 + i, criticalNotification: 0 },
+      issues: bad ? [{}] : [], wanUptime: bad ? 99.1 : 100, wan: { avgLatency: j(12 + i * 5), packetLoss: bad ? 2.5 : 0 },
+      health: bad ? "warning" : "ok", wanStatus: bad ? "warning" : "ok", down: j(3e6), up: j(4e5),
+      wans: { ok: true, value: wanCount === 2
+        ? [{ name: "WAN", ip, up: true, down: j(3e6), upRate: j(4e5) }, { name: "WAN2", ip: `198.51.100.${20 + i}`, up: !bad, down: j(2e5), upRate: j(5e4) }]
+        : [{ name: "WAN", ip, up: true, down: j(3e6), upRate: j(4e5) }] } });
+  });
   const series = Array.from({ length: 288 }, (_, i) => ({ t: i, down: 5e6 + 4e6 * Math.sin(i / 20) + Math.random() * 1e6, up: 1e6 + 5e5 * Math.sin(i / 15) + Math.random() * 2e5 }));
   return Promise.resolve({ models, series, warnings: [] });
 }
@@ -350,7 +362,7 @@ function render() {
     <section class="card"><h2>Overall health</h2>
       <div class="big">${chip(overall)}</div>
       <div class="note">${okSites} of ${M.length} site${M.length === 1 ? "" : "s"} healthy</div>
-      <div class="chips">${countChip(offline, `of ${total} devices offline`, "warning")}${countChip(critical, "critical alerts", "warning")}${countChip(issues, "internet issues", "warning")}</div>
+      <div class="chips">${countChip(offline, `of ${total} devices offline`, "warning")}${countChip(critical, critical === 1 ? "critical alert" : "critical alerts", "warning")}${countChip(issues, issues === 1 ? "internet issue" : "internet issues", "warning")}</div>
     </section>
     <section class="card"><h2>WAN health</h2>
       <div class="big">${chip(wanStatus)}</div>
@@ -358,13 +370,13 @@ function render() {
     </section>
     <section class="card"><h2>Total traffic</h2>
       <div class="big">${esc(fmtRate(down))} <span class="sub">down</span></div>
-      <div class="big" style="font-size:18px">${esc(fmtRate(up))} <span class="sub">up</span></div>
+      <div class="big" style="font-size:15px">${esc(fmtRate(up))} <span class="sub">up</span></div>
       ${spark([s.map((x) => x.down), s.map((x) => x.up)])}
       <div class="legend"><span class="d">● Download</span><span class="u">● Upload</span><span>Last 24 h${s.length ? ` · peak ${esc(fmtRate(peakDown))} down` : ""}</span></div>
     </section>
   </div>
 
-  <section class="card" style="margin-bottom:12px"><h2>Sites</h2>
+  <section class="card"><h2>Sites</h2>
     <div class="tablewrap"><table>
       <thead><tr><th>Site</th><th>Health</th><th>WAN</th><th class="num">Down</th><th class="num">Up</th><th>ISP</th><th class="num">WAN uptime</th><th class="num">Latency</th><th class="num">Loss</th><th class="num">Devices</th><th class="num">Clients</th></tr></thead>
       <tbody>${M.map((m) => {
