@@ -369,11 +369,12 @@ function render() {
       <thead><tr><th>Site</th><th>Health</th><th>WAN</th><th class="num">Down</th><th class="num">Up</th><th>ISP</th><th class="num">WAN uptime</th><th class="num">Latency</th><th class="num">Loss</th><th class="num">Devices</th><th class="num">Clients</th></tr></thead>
       <tbody>${M.map((m) => {
         const lines = wanLines(m);
+        const isDefault = /^default$/i.test(m.name); // single-site consoles: show the console name instead
         const one = (html, r) => `<div class="wl${r ? " r" : ""}">${html}</div>`;
         return `<tr>
-        <td>${one(esc(m.name))}${m.host ? `<div class="meta sub">${esc(m.host)}</div>` : ""}</td>
+        <td>${one(esc(isDefault && m.host ? m.host : m.name))}${!isDefault && m.host ? `<div class="meta sub">${esc(m.host)}</div>` : ""}</td>
         <td>${one(chip(m.health))}</td>
-        <td>${lines.map((l) => one(`${chip(l.status)} ${esc(l.name)}${l.ip ? ` <span class="sub">${esc(l.ip)}</span>` : ""}`)).join("")}</td>
+        <td>${lines.map((l) => one(`${chip(l.status)}${/^wan$/i.test(l.name) ? "" : ` ${esc(l.name)}`}${l.ip ? ` <span class="sub">${esc(l.ip)}</span>` : ""}`)).join("")}</td>
         <td class="num">${lines.map((l) => one(has(l.down) ? esc(fmtRate(l.down)) : "–", true)).join("")}</td>
         <td class="num">${lines.map((l) => one(has(l.up) ? esc(fmtRate(l.up)) : "–", true)).join("")}</td>
         <td>${one(esc(m.isp || "–"))}</td>
