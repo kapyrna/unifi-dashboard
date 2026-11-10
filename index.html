@@ -186,7 +186,7 @@ async function api(path, init = {}) {
   const res = await fetch(base + path, { ...init, headers, signal: AbortSignal.timeout(30000) });
   if (!res.ok) {
     const e = new Error(`${res.status} ${res.statusText} (${path.split("?")[0]})`);
-    e.status = res.status; e.retryAfter = res.headers.get("retry-after");
+    e.status = res.status; e.retryAfter = res.headers.get("retry-after"); e.brief = `${res.status} ${res.statusText}`.trim();
     throw e;
   }
   return res.json();
@@ -211,6 +211,7 @@ function cached(key, fn) {
   if (hit && Date.now() - hit.t < CONNECTOR_TTL) return hit.p;
   const p = settle(fn());
   cache.set(key, { t: Date.now(), p });
+  p.then((r) => { if (!r.ok) { const e = cache.get(key); if (e && e.p === p) e.t = Date.now() - CONNECTOR_TTL + 30000; } }); // retry a failure after 30 s
   return p;
 }
 
@@ -300,6 +301,26 @@ function consoleOffline(site, host) {
   if (typeof state === "string" && OFFLINE_STATE.test(state)) return true;
   const c = site.statistics?.counts || {};
   return num(c.totalDevice) > 0 && num(c.offlineDevice) >= num(c.totalDevice);
+}
+const siteLabel = (m) => (/^default$/i.test(m.name) && m.host ? m.host : m.name);
+const briefError = (e) => e?.brief || (e instanceof TypeError ? "network error" : e?.name === "TimeoutError" ? "timed out" : e?.message || "failed");
+
+// Why per-WAN lines, clients or destinations are missing: online consoles whose connector calls failed.
+function detailIssues(models) {
+  return models.filter((m) => !m.offline).map((m) => ({
+    m, errs: [["WANs", m.wans], ["clients", m.clients], ["destinations", m.flows]].filter(([, r]) => r && !r.ok).map(([what, r]) => `${what}: ${briefError(r.error)}`),
+  })).filter((x) => x.errs.length);
+}
+function paintUpdated() {
+  const el = $("#updated");
+  let text = state.updated ? `${DEMO ? "Demo data · " : ""}Updated ${state.updated.toLocaleTimeString()}` : "Not connected", tip = "";
+  const bad = detailIssues(state.models);
+  if (bad.length) {
+    const first = bad[0].errs[0].split(": ")[1];
+    text += ` · console details unavailable for ${bad.length} of ${state.models.filter((m) => !m.offline).length} console${bad.length === 1 ? "" : "s"} (${first})`;
+    tip = "Details come from each console through the Site Manager connector, which needs an owner or admin key.\n" + bad.map((x) => `${siteLabel(x.m)}: ${x.errs.join("; ")}`).join("\n");
+  }
+  el.textContent = text; el.title = tip;
 }
 // Fold per-WAN link state (from the gateway) into the site's WAN status.
 function combineWan(base, wans) {
@@ -458,7 +479,7 @@ function demoModels() {
       flows: { ok: true, value: new Map([["video.example-cdn.net", 12e9], ["api.example.com", 4e9], ["updates.example.org", 2.5e9], ["photos.example.com", 1.8e9], ["chat.example.io", 6e8], ["tiny.example.net", 1e6]].map(([k, v]) => { const t = j(v); return [k, { down: Math.round(t * 0.9), up: Math.round(t * 0.1), total: t, split: true }]; })) } },
     { id: "b", name: "Cabin", host: "Cloud Gateway Max", isp: "Example Cable", counts: { totalDevice: 4, offlineDevice: 1, wifiClient: 5, wiredClient: 1, criticalNotification: 1 },
       issues: [{}], wanUptime: 97.4, wan: { avgLatency: j(48), packetLoss: 3.1, downtime: 120, uptime: 3480 }, health: "warning", wanStatus: "warning", down: j(1e6), up: j(2e5),
-      wans: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") } },
+      wans: { ok: false, error: Object.assign(new Error("403 Forbidden (/v1/connector/consoles/…)"), { brief: "403 Forbidden" }) } },
   ];
   const extra = [["Office", "Cloud Gateway Fiber", 1], ["Warehouse", "UDM SE", 2], ["Shop", "UCG Ultra", 1], ["Studio", "Dream Router", 1], ["Default", "UDR 5G Max", 1], ["Lake House", "UDM Pro Max", 2]];
   extra.forEach(([name, host, wanCount], i) => {
@@ -522,7 +543,6 @@ function render() {
   // Offline consoles are reported on their own; their stale counts and metrics stay out of every other tally.
   const offlineSites = M.filter((m) => m.offline), online = M.filter((m) => !m.offline);
   const sum = (f) => online.reduce((a, m) => a + num(f(m)), 0);
-  const siteLabel = (m) => (/^default$/i.test(m.name) && m.host ? m.host : m.name);
 
   // overall health
   const overall = !online.length ? "offline" : worst([...online.map((m) => m.health), ...(offlineSites.length ? ["warning"] : [])]);
@@ -644,7 +664,7 @@ async function refresh() {
   } finally {
     state.busy = false; $("#refresh").disabled = false;
     paintBanner();
-    $("#updated").textContent = state.updated ? `${DEMO ? "Demo data · " : ""}Updated ${state.updated.toLocaleTimeString()}` : "Not connected";
+    paintUpdated();
     render();
   }
 }
