@@ -46,7 +46,9 @@
   .chip.unknown { color: var(--unk); background: var(--unk-bg); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th, td { text-align: left; padding: 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .wl { display: flex; align-items: center; gap: 6px; min-height: 28px; white-space: nowrap; }
+  .wl.r { justify-content: flex-end; }
   th { font-size: 12px; font-weight: 600; color: var(--muted); }
   tr:last-child td { border-bottom: 0; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -212,16 +214,30 @@ function parseFlows(r) {
   return hosts;
 }
 
+// Multi-WAN: the gateway device reports one object per WAN (wan1, wan2, ...).
+function parseWans(devices) {
+  const isWan = (k) => /^wan\d+$/.test(k);
+  const gw = devices.find((d) => Object.keys(d).some(isWan));
+  if (!gw) return [];
+  return Object.keys(gw).filter(isWan).sort((a, b) => parseInt(a.slice(3), 10) - parseInt(b.slice(3), 10))
+    .map((k) => {
+      const w = gw[k] || {};
+      return {
+        name: w.name || w.ifname || k.toUpperCase(), ip: w.ip || "", enabled: w.enable !== false,
+        up: w.up === undefined ? undefined : !!w.up,
+        down: has(w["rx_bytes-r"]) ? +w["rx_bytes-r"] : undefined,
+        upRate: has(w["tx_bytes-r"]) ? +w["tx_bytes-r"] : undefined,
+      };
+    })
+    .filter((w) => w.enabled);
+}
+
 // Per-client traffic and destination hostnames are not in the Site Manager cloud API.
 // Best effort: reach the console's local Network API through the cloud connector.
 async function loadConnector(site) {
   const conn = (p, init) => api(`/v1/connector/consoles/${encodeURIComponent(site.hostId)}/${p}`, init);
-  const map = await cached(`map:${site.hostId}`, () => conn("network/integration/v1/sites?limit=200").then((r) => r.data || []));
-  if (!map.ok) return { clients: map, flows: map };
-  const ent = map.value.find((s) => s.id === site.siteId) || (map.value.length === 1 ? map.value[0] : null);
-  if (!ent) { const m = { ok: false, error: new Error("Site not found on its console") }; return { clients: m, flows: m }; }
-  const ref = encodeURIComponent(ent.internalReference || "default");
-  const [clients, flows] = await Promise.all([
+  const ref = "default"; // assumes one site per console
+  const [clients, flows, wans] = await Promise.all([
     cached(`sta:${site.hostId}:${ref}`, () => conn(`network/api/s/${ref}/stat/sta`).then((r) => r.data || [])),
     cached(`flows:${site.hostId}:${ref}`, () => {
       const to = Date.now(), from = to - 24 * 3600 * 1000;
@@ -230,8 +246,9 @@ async function loadConnector(site) {
         body: JSON.stringify({ timestampFrom: from, timestampTo: to, pageNumber: 0, pageSize: 1000, skip: 0, limit: 1000 }),
       }).then(parseFlows);
     }),
+    cached(`dev:${site.hostId}`, () => conn(`network/api/s/${ref}/stat/device`).then((r) => parseWans(r.data || []))),
   ]);
-  return { clients, flows };
+  return { clients, flows, wans };
 }
 
 // ---------- health rules (derived from cloud statistics) ----------
@@ -248,6 +265,14 @@ function wanHealth(st, w) {
   if (w && has(w.uptime) && num(w.uptime) === 0 && num(w.downtime) > 0) return "error";
   if ((st.internetIssues || []).length || (w && (num(w.downtime) > 0 || num(w.packetLoss) >= 2))) return "warning";
   return "ok";
+}
+// Fold per-WAN link state (from the gateway) into the site's WAN status.
+function combineWan(base, wans) {
+  if (!wans?.ok) return base;
+  const states = wans.value.filter((w) => w.up !== undefined).map((w) => w.up);
+  if (!states.length) return base;
+  const derived = states.every((u) => !u) ? "error" : states.some((u) => !u) ? "warning" : "ok";
+  return worst([base, derived]);
 }
 function hostName(h) {
   const r = h.reportedState || {};
@@ -287,9 +312,9 @@ async function loadModels() {
       id: s.siteId, name: s.meta?.name || s.siteId, host: hostById.get(s.hostId) || "",
       isp: st.ispInfo?.name || "", counts: st.counts || {}, issues: st.internetIssues || [],
       wanUptime: st.percentages?.wanUptime, wan: w,
-      health: siteHealth(st), wanStatus: wanHealth(st, w),
+      health: siteHealth(st), wanStatus: combineWan(wanHealth(st, w), conn.wans),
       down: w ? num(w.download_kbps) * KBPS_TO_BYTES : 0, up: w ? num(w.upload_kbps) * KBPS_TO_BYTES : 0,
-      clients: conn.clients, flows: conn.flows,
+      clients: conn.clients, flows: conn.flows, wans: conn.wans,
     };
   }));
   return { models, series, warnings };
@@ -304,10 +329,14 @@ function demoModels() {
   const models = [
     { id: "a", name: "Home", host: "Dream Machine Pro", isp: "Example Fiber", counts: { totalDevice: 9, offlineDevice: 0, wifiClient: 31, wiredClient: 12, criticalNotification: 0 },
       issues: [], wanUptime: 100, wan: { avgLatency: j(9), packetLoss: 0 }, health: "ok", wanStatus: "ok", down: j(7e6), up: j(9e5),
+      wans: { ok: true, value: [
+        { name: "Fiber", ip: "203.0.113.7", up: true, down: j(6e6), upRate: j(8e5) },
+        { name: "LTE backup", ip: "198.51.100.4", up: true, down: j(1e5), upRate: j(2e4) }] },
       clients: clients(["Living-Room-TV", "Desktop", "Pixel-9", "NAS", "Laptop"]),
       flows: flows({ "video.example-cdn.net": 12e9, "api.example.com": 4e9, "updates.example.org": 2.5e9, "photos.example.com": 1.8e9 }) },
     { id: "b", name: "Cabin", host: "Cloud Gateway Max", isp: "Example Cable", counts: { totalDevice: 4, offlineDevice: 1, wifiClient: 5, wiredClient: 1, criticalNotification: 1 },
       issues: [{}], wanUptime: 97.4, wan: { avgLatency: j(48), packetLoss: 3.1, downtime: 120, uptime: 3480 }, health: "warning", wanStatus: "warning", down: j(1e6), up: j(2e5),
+      wans: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") },
       clients: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") }, flows: { ok: false, error: new Error("403 Forbidden (/v1/connector/consoles/…)") } },
   ];
   const series = Array.from({ length: 288 }, (_, i) => ({ t: i, down: 5e6 + 4e6 * Math.sin(i / 20) + Math.random() * 1e6, up: 1e6 + 5e5 * Math.sin(i / 15) + Math.random() * 2e5 }));
@@ -334,6 +363,13 @@ function list(items, emptyText) {
   const max = Math.max(1, ...items.map((i) => i.bytes));
   return items.map((i) => `<div class="row"><div><div class="title">${esc(i.title)}</div>${i.meta ? `<div class="meta">${esc(i.meta)}</div>` : ""}</div>
     <div class="val">${esc(fmtBytes(i.bytes))}</div><div class="bar"><b style="width:${(i.bytes / max * 100).toFixed(1)}%"></b></div></div>`).join("");
+}
+
+// One entry per WAN. Falls back to a single site-level line from the cloud ISP metrics.
+function wanLines(m) {
+  const ws = m.wans?.ok && m.wans.value.length ? m.wans.value : null;
+  if (!ws) return [{ name: "WAN", ip: "", status: m.wanStatus, down: m.down, up: m.up }];
+  return ws.map((w) => ({ name: w.name, ip: w.ip, status: w.up === undefined ? "unknown" : w.up ? "ok" : "error", down: w.down, up: w.upRate }));
 }
 
 function render() {
@@ -403,18 +439,25 @@ function render() {
 
   <section class="card" style="margin-bottom:12px"><h2>Sites</h2>
     <div class="tablewrap"><table>
-      <thead><tr><th>Site</th><th>ISP</th><th>Health</th><th>WAN</th><th class="num">WAN uptime</th><th class="num">Latency</th><th class="num">Loss</th><th class="num">Devices</th><th class="num">Clients</th><th class="num">Down</th><th class="num">Up</th></tr></thead>
-      <tbody>${M.map((m) => `<tr>
-        <td>${esc(m.name)}${m.host ? `<div class="meta sub">${esc(m.host)}</div>` : ""}</td>
-        <td>${esc(m.isp || "–")}</td><td>${chip(m.health)}</td><td>${chip(m.wanStatus)}</td>
-        <td class="num">${has(m.wanUptime) ? `${(+m.wanUptime).toFixed(2)}%` : "–"}</td>
-        <td class="num">${has(m.wan?.avgLatency) ? `${Math.round(m.wan.avgLatency)} ms` : "–"}</td>
-        <td class="num">${has(m.wan?.packetLoss) ? `${(+m.wan.packetLoss).toFixed(1)}%` : "–"}</td>
-        <td class="num">${num(m.counts.offlineDevice) ? `${num(m.counts.offlineDevice)} offline / ` : ""}${num(m.counts.totalDevice)}</td>
-        <td class="num">${num(m.counts.wifiClient) + num(m.counts.wiredClient)}</td>
-        <td class="num">${esc(fmtRate(m.down))}</td><td class="num">${esc(fmtRate(m.up))}</td></tr>`).join("")}
+      <thead><tr><th>Site</th><th>Health</th><th>WAN</th><th class="num">Down</th><th class="num">Up</th><th>ISP</th><th class="num">WAN uptime</th><th class="num">Latency</th><th class="num">Loss</th><th class="num">Devices</th><th class="num">Clients</th></tr></thead>
+      <tbody>${M.map((m) => {
+        const lines = wanLines(m);
+        const one = (html, r) => `<div class="wl${r ? " r" : ""}">${html}</div>`;
+        return `<tr>
+        <td>${one(esc(m.name))}${m.host ? `<div class="meta sub">${esc(m.host)}</div>` : ""}</td>
+        <td>${one(chip(m.health))}</td>
+        <td>${lines.map((l) => one(`${chip(l.status)} ${esc(l.name)}${l.ip ? ` <span class="sub">${esc(l.ip)}</span>` : ""}`)).join("")}</td>
+        <td class="num">${lines.map((l) => one(has(l.down) ? esc(fmtRate(l.down)) : "–", true)).join("")}</td>
+        <td class="num">${lines.map((l) => one(has(l.up) ? esc(fmtRate(l.up)) : "–", true)).join("")}</td>
+        <td>${one(esc(m.isp || "–"))}</td>
+        <td class="num">${one(has(m.wanUptime) ? `${(+m.wanUptime).toFixed(2)}%` : "–", true)}</td>
+        <td class="num">${one(has(m.wan?.avgLatency) ? `${Math.round(m.wan.avgLatency)} ms` : "–", true)}</td>
+        <td class="num">${one(has(m.wan?.packetLoss) ? `${(+m.wan.packetLoss).toFixed(1)}%` : "–", true)}</td>
+        <td class="num">${one(`${num(m.counts.offlineDevice) ? `${num(m.counts.offlineDevice)} offline / ` : ""}${num(m.counts.totalDevice)}`, true)}</td>
+        <td class="num">${one(String(num(m.counts.wifiClient) + num(m.counts.wiredClient)), true)}</td></tr>`;
+      }).join("")}
       </tbody></table></div>
-    <div class="note">Health is derived from offline devices, critical alerts and reported internet issues. WAN rates are the latest 5-minute sample.</div>
+    <div class="note">Health is derived from offline devices, critical alerts and reported internet issues. Each WAN gets its own line when the gateway reports it through the console connector; otherwise one line shows the latest 5-minute ISP sample. Uptime, latency and loss are per site.</div>
   </section>
 
   <div class="grid2">
