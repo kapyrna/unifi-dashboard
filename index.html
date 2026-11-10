@@ -9,14 +9,14 @@
     --bg: #f5f6f8; --card: #ffffff; --text: #1c2230; --muted: #667085; --line: #e3e6ec;
     --ok: #157f3b; --ok-bg: #e3f6ea; --warn: #9a5b00; --warn-bg: #fff1d6;
     --err: #b42318; --err-bg: #fde4e1; --unk: #55607a; --unk-bg: #e8ebf1;
-    --accent: #2b6cff; --down: #2b6cff; --up: #c2410c; --bar: rgba(43,108,255,.16);
+    --accent: #2b6cff; --down: #2b6cff; --up: #c2410c; --bar: rgba(43,108,255,.16); --off: #b42318;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #12151c; --card: #1a1f2a; --text: #e8ebf2; --muted: #98a2b3; --line: #2a3140;
       --ok: #5fd38a; --ok-bg: #153524; --warn: #f2b04a; --warn-bg: #3a2b0e;
       --err: #ff8a7a; --err-bg: #3d1a16; --unk: #aab3c5; --unk-bg: #262d3b;
-      --accent: #6f9bff; --down: #6f9bff; --up: #f08a5d; --bar: rgba(111,155,255,.25);
+      --accent: #6f9bff; --down: #6f9bff; --up: #f08a5d; --bar: rgba(111,155,255,.25); --off: #d92d20;
     }
   }
   /* Everything is sized in rem so it scales with the screen: about 19px at 1920 wide, 32px at 4K. */
@@ -47,6 +47,7 @@
   .chip.ok { color: var(--ok); background: var(--ok-bg); }
   .chip.warning { color: var(--warn); background: var(--warn-bg); }
   .chip.error { color: var(--err); background: var(--err-bg); }
+  .chip.offline { color: #fff; background: var(--off); }
   .chip.unknown { color: var(--unk); background: var(--unk-bg); }
   .chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .4rem; }
   .chips .chip { font-size: .85rem; }
@@ -168,8 +169,8 @@ function fmtBytes(n) {
   while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
   return `${i === 0 || n >= 100 ? n.toFixed(0) : n.toFixed(1)} ${u[i]}`;
 }
-const RANK = { ok: 0, warning: 1, error: 2 };
-const LABEL = { ok: "Healthy", warning: "Degraded", error: "Down", unknown: "Unknown" };
+const RANK = { ok: 0, warning: 1, error: 2, offline: 3 };
+const LABEL = { ok: "Healthy", warning: "Degraded", error: "Down", offline: "Offline", unknown: "Unknown" };
 const chip = (st, text) => `<span class="chip ${esc(st)}"><i></i>${esc(text ?? LABEL[st] ?? st)}</span>`;
 function worst(statuses) {
   const known = statuses.filter((s) => s in RANK);
@@ -291,6 +292,15 @@ function wanHealth(st, w) {
   if ((st.internetIssues || []).length || (w && (num(w.downtime) > 0 || num(w.packetLoss) >= 2))) return "warning";
   return "ok";
 }
+// The cloud API has no documented online flag for a console. Treat it as offline when its reportedState says so
+// (an undocumented field), or when every device at the site is offline, which can't happen while the console runs.
+const OFFLINE_STATE = /disconnect|offline|unreach|down/i;
+function consoleOffline(site, host) {
+  const state = host?.reportedState?.state;
+  if (typeof state === "string" && OFFLINE_STATE.test(state)) return true;
+  const c = site.statistics?.counts || {};
+  return num(c.totalDevice) > 0 && num(c.offlineDevice) >= num(c.totalDevice);
+}
 // Fold per-WAN link state (from the gateway) into the site's WAN status.
 function combineWan(base, wans) {
   if (!wans?.ok) return base;
@@ -403,7 +413,7 @@ async function loadModels() {
   ]);
   const warnings = [];
   if (!isp.ok) warnings.push(`WAN metrics unavailable: ${explain(isp.error)}`);
-  const hostById = new Map((hosts.ok ? hosts.value : []).map((h) => [h.id, hostName(h)]));
+  const hostObj = new Map((hosts.ok ? hosts.value : []).map((h) => [h.id, h]));
 
   // ISP metrics: latest sample per site, plus the 24 h total-traffic series.
   const latest = new Map();
@@ -416,13 +426,16 @@ async function loadModels() {
 
   const models = await Promise.all(sites.map(async (s) => {
     const st = s.statistics || {};
-    const w = latest.get(`${s.hostId}:${s.siteId}`);
-    const [wans, clients, flows] = await Promise.all([loadWans(s), loadClients(s), loadFlows(s)]);
+    const host = hostObj.get(s.hostId), offline = consoleOffline(s, host);
+    const w = offline ? undefined : latest.get(`${s.hostId}:${s.siteId}`); // an offline console's numbers are stale
+    const gone = { ok: false, error: new Error("Console offline") };
+    // No point asking an offline console for anything through the connector.
+    const [wans, clients, flows] = offline ? [gone, gone, gone] : await Promise.all([loadWans(s), loadClients(s), loadFlows(s)]);
     return {
-      id: s.siteId, name: s.meta?.name || s.siteId, host: hostById.get(s.hostId) || "",
+      id: s.siteId, name: s.meta?.name || s.siteId, host: host ? hostName(host) : "", offline,
       isp: st.ispInfo?.name || "", counts: st.counts || {}, issues: st.internetIssues || [],
       wanUptime: st.percentages?.wanUptime, wan: w,
-      health: siteHealth(st), wanStatus: combineWan(wanHealth(st, w), wans),
+      health: offline ? "offline" : siteHealth(st), wanStatus: offline ? "offline" : combineWan(wanHealth(st, w), wans),
       wans, clients, flows,
     };
   }));
@@ -449,12 +462,12 @@ function demoModels() {
   ];
   const extra = [["Office", "Cloud Gateway Fiber", 1], ["Warehouse", "UDM SE", 2], ["Shop", "UCG Ultra", 1], ["Studio", "Dream Router", 1], ["Default", "UDR 5G Max", 1], ["Lake House", "UDM Pro Max", 2]];
   extra.forEach(([name, host, wanCount], i) => {
-    const bad = i === 2, ip = `203.0.113.${20 + i}`;
+    const bad = i === 2, off = i === 3, ip = `203.0.113.${20 + i}`;
     models.push({ id: `x${i}`, name, host, isp: ["Example Fiber", "Example Cable", "Example DSL"][i % 3],
       counts: { totalDevice: 3 + i, offlineDevice: bad ? 1 : 0, wifiClient: 8 + i * 3, wiredClient: 2 + i, criticalNotification: 0 },
       issues: bad ? [{}] : [], wanUptime: bad ? 99.1 : 100, wan: { avgLatency: j(12 + i * 5), packetLoss: bad ? 2.5 : 0 },
-      health: bad ? "warning" : "ok", wanStatus: bad ? "warning" : "ok", down: j(3e6), up: j(4e5),
-      wans: { ok: true, value: wanCount === 2
+      offline: off, health: off ? "offline" : bad ? "warning" : "ok", wanStatus: off ? "offline" : bad ? "warning" : "ok", down: j(3e6), up: j(4e5),
+      wans: off ? { ok: false, error: new Error("Console offline") } : { ok: true, value: wanCount === 2
         ? [{ name: "WAN", ip, up: true }, { name: "WAN2", ip: `198.51.100.${20 + i}`, up: !bad }]
         : [{ name: "WAN", ip, up: true }] } });
   });
@@ -506,19 +519,24 @@ function render() {
   }
   const M = state.models;
   if (!M.length) { main.innerHTML = `<div class="card empty">${state.busy ? "Loading…" : "No sites found for this API key."}</div>`; return; }
-  const sum = (f) => M.reduce((a, m) => a + num(f(m)), 0);
+  // Offline consoles are reported on their own; their stale counts and metrics stay out of every other tally.
+  const offlineSites = M.filter((m) => m.offline), online = M.filter((m) => !m.offline);
+  const sum = (f) => online.reduce((a, m) => a + num(f(m)), 0);
+  const siteLabel = (m) => (/^default$/i.test(m.name) && m.host ? m.host : m.name);
 
   // overall health
-  const overall = worst(M.map((m) => m.health));
-  const okSites = M.filter((m) => m.health === "ok").length;
+  const overall = !online.length ? "offline" : worst([...online.map((m) => m.health), ...(offlineSites.length ? ["warning"] : [])]);
+  const okSites = online.filter((m) => m.health === "ok").length;
   const offline = sum((m) => m.counts.offlineDevice), total = sum((m) => m.counts.totalDevice);
   const critical = sum((m) => m.counts.criticalNotification), issues = sum((m) => m.issues.length);
+  const names = offlineSites.map(siteLabel);
+  const offlineChip = offlineSites.length ? `<span class="chip offline"><i></i>${offlineSites.length === 1 ? "1 console offline" : `${offlineSites.length} consoles offline`}${names.length <= 3 ? `: ${esc(names.join(", "))}` : ""}</span>` : "";
   const countChip = (n, label, bad) => `<span class="chip ${n > 0 ? bad : "ok"}"><i></i>${n} ${label}</span>`;
 
   // WAN
-  const wanStatus = worst(M.map((m) => m.wanStatus));
-  const lat = M.map((m) => m.wan?.avgLatency).filter(has);
-  const loss = M.map((m) => m.wan?.packetLoss).filter(has);
+  const wanStatus = online.length ? worst(online.map((m) => m.wanStatus)) : "offline";
+  const lat = online.map((m) => m.wan?.avgLatency).filter(has);
+  const loss = online.map((m) => m.wan?.packetLoss).filter(has);
   const avg = (a) => a.reduce((x, y) => x + +y, 0) / a.length;
 
   // traffic
@@ -543,8 +561,8 @@ function render() {
   <div class="grid3">
     <section class="card"><h2>Overall health</h2>
       <div class="big">${chip(overall)}</div>
-      <div class="note">${okSites} of ${M.length} site${M.length === 1 ? "" : "s"} healthy</div>
-      <div class="chips">${countChip(offline, `of ${total} devices offline`, "warning")}${countChip(critical, critical === 1 ? "critical alert" : "critical alerts", "warning")}${countChip(issues, issues === 1 ? "internet issue" : "internet issues", "warning")}</div>
+      <div class="note">${okSites} of ${M.length} site${M.length === 1 ? "" : "s"} healthy${offlineSites.length ? ` · ${offlineSites.length} offline` : ""}</div>
+      <div class="chips">${offlineChip}${countChip(offline, `of ${total} devices offline`, "warning")}${countChip(critical, critical === 1 ? "critical alert" : "critical alerts", "warning")}${countChip(issues, issues === 1 ? "internet issue" : "internet issues", "warning")}</div>
     </section>
     <section class="card"><h2>WAN health</h2>
       <div class="big">${chip(wanStatus)}</div>
@@ -567,15 +585,15 @@ function render() {
         const isDefault = /^default$/i.test(m.name); // single-site consoles: show the console name instead
         const one = (html, r) => `<div class="wl${r ? " r" : ""}">${html}</div>`;
         return `<tr>
-        <td>${one(`${esc(isDefault && m.host ? m.host : m.name)}${!isDefault && m.host ? ` <span class="sub">${esc(m.host)}</span>` : ""}`)}</td>
+        <td>${one(`${esc(siteLabel(m))}${!isDefault && m.host ? ` <span class="sub">${esc(m.host)}</span>` : ""}`)}</td>
         <td>${one(chip(m.health))}</td>
         <td>${lines.map((l) => one(`${chip(l.status)}${/^wan$/i.test(l.name) ? "" : ` ${esc(l.name)}`}${l.ip ? ` <span class="sub">${esc(l.ip)}</span>` : ""}`)).join("")}</td>
         <td>${one(esc(m.isp || "–"))}</td>
-        <td class="num">${one(has(m.wanUptime) ? `${(+m.wanUptime).toFixed(2)}%` : "–", true)}</td>
+        <td class="num">${one(!m.offline && has(m.wanUptime) ? `${(+m.wanUptime).toFixed(2)}%` : "–", true)}</td>
         <td class="num">${one(has(m.wan?.avgLatency) ? `${Math.round(m.wan.avgLatency)} ms` : "–", true)}</td>
         <td class="num">${one(has(m.wan?.packetLoss) ? `${(+m.wan.packetLoss).toFixed(1)}%` : "–", true)}</td>
-        <td class="num">${one(`${num(m.counts.offlineDevice) ? `${num(m.counts.offlineDevice)} offline / ` : ""}${num(m.counts.totalDevice)}`, true)}</td>
-        <td class="num">${one(String(num(m.counts.wifiClient) + num(m.counts.wiredClient)), true)}</td></tr>`;
+        <td class="num">${one(m.offline ? "–" : `${num(m.counts.offlineDevice) ? `${num(m.counts.offlineDevice)} offline / ` : ""}${num(m.counts.totalDevice)}`, true)}</td>
+        <td class="num">${one(m.offline ? "–" : String(num(m.counts.wifiClient) + num(m.counts.wiredClient)), true)}</td></tr>`;
       }).join("")}
       </tbody></table></div>
   </section>${topClients.length || topDest.length ? `<div class="grid2">${topCard("Top clients", topClients)}${topCard("Top destinations", topDest)}</div>` : ""}`;

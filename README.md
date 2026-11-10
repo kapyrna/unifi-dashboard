@@ -30,6 +30,8 @@ Add `?demo=1` to the URL to preview the page with sample data.
 
 Site health is derived: Down if a gateway is offline, Degraded if any device is offline or there are critical alerts or internet issues, otherwise Healthy.
 
+A console that is **offline** gets its own red Offline status instead of Degraded, and the Overall health card lists it (for example "1 console offline: Cabin"). Offline consoles are left out of the device, alert and WAN tallies, show dashes for their stale numbers, and are not sent connector requests. The overall status shows Degraded while some consoles are offline and Offline only if all of them are. The cloud API has no documented online flag, so a console counts as offline when its `reportedState.state` reads disconnected, offline or similar (an undocumented field whose values I could not confirm), or when every device at its site is offline.
+
 ## Known limitations
 
 - **CORS:** I couldn't verify that `api.ui.com` allows requests from a browser page. If the page reports it can't reach the API, run it behind a CORS proxy and set the proxy URL under Settings, Advanced.
