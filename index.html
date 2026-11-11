@@ -35,6 +35,7 @@
   button:disabled { opacity: .6; cursor: default; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .grid3 { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); margin-bottom: .6rem; }
+  @media (min-width: 1200px) { .grid3.four { grid-template-columns: 1.7fr .9fr 1.1fr .9fr; } }
   .grid2 { display: grid; gap: .6rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: .6rem; }
   @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: .7rem 1rem; min-width: 0; }
@@ -275,12 +276,46 @@ const loadWans = (site) => cached(`dev:${site.hostId}`, () =>
   connect(site, "network/api/s/default/stat/device").then((r) => parseWans(r.data || [])));
 const loadClients = (site) => cached(`sta:${site.hostId}`, () =>
   connect(site, "network/api/s/default/stat/sta").then((r) => r.data || []));
-const loadFlows = (site) => cached(`flows:${site.hostId}`, () => {
+// A flow stays local when both its source and destination are private, link-local or multicast addresses.
+// Returns null when either address is missing, so the flow can't be classified.
+function flowIsLocal(f) {
+  const ip = (e) => { const x = e?.ip ?? e?.address; return typeof x === "string" ? x.trim() : ""; };
+  const s = ip(f.source) || (typeof f.source_ip === "string" ? f.source_ip.trim() : "");
+  const d = ip(f.destination) || (typeof f.destination_ip === "string" ? f.destination_ip.trim() : "");
+  return s && d ? isPrivateIp(s) && isPrivateIp(d) : null;
+}
+function localTraffic(rows, partial) {
+  let bytes = 0, flows = 0, unknown = 0;
+  for (const f of rows) {
+    const local = flowIsLocal(f);
+    if (local === null) { unknown++; continue; }
+    if (!local) continue;
+    const t = f.traffic_data || f.traffic || {};
+    bytes += num(t.total_bytes ?? f.total_bytes) || num(t.bytes_rx ?? t.rx_bytes) + num(t.bytes_tx ?? t.tx_bytes) || num(f.bytes);
+    flows++;
+  }
+  return { bytes, flows, seen: rows.length, unknown, partial };
+}
+const FLOW_PAGE = 1000, FLOW_MAX_PAGES = 5;
+const loadFlows = (site) => cached(`flows:${site.hostId}`, async () => {
   const to = Date.now(), from = to - 24 * 3600 * 1000;
-  return connect(site, "network/v2/api/site/default/traffic-flows", {
-    method: "POST",
-    body: JSON.stringify({ timestampFrom: from, timestampTo: to, pageNumber: 0, pageSize: 1000, skip: 0, limit: 1000 }),
-  }).then(parseFlows);
+  const rows = []; let partial = false, prev = "";
+  for (let page = 0; page < FLOW_MAX_PAGES; page++) {
+    let r;
+    try {
+      r = await connect(site, "network/v2/api/site/default/traffic-flows", {
+        method: "POST",
+        body: JSON.stringify({ timestampFrom: from, timestampTo: to, pageNumber: page, pageSize: FLOW_PAGE, skip: page * FLOW_PAGE, limit: FLOW_PAGE }),
+      });
+    } catch (e) { if (!page) throw e; partial = true; break; } // keep what the earlier pages gave
+    const batch = Array.isArray(r) ? r : r.data || r.flows || [];
+    const sig = batch.length ? JSON.stringify(batch[0]) : "";
+    if (page && sig === prev) { partial = true; break; } // the console ignored paging and repeated a page: don't count it twice
+    rows.push(...batch); prev = sig;
+    if (batch.length < FLOW_PAGE) break;
+    if (page === FLOW_MAX_PAGES - 1) partial = true; // more flows than we fetch
+  }
+  return { hosts: parseFlows(rows), local: localTraffic(rows, partial) };
 });
 
 // ---------- health rules (derived from cloud statistics) ----------
@@ -459,13 +494,15 @@ async function loadModels() {
     const w = offline ? undefined : latest.get(`${s.hostId}:${s.siteId}`); // an offline console's numbers are stale
     const gone = { ok: false, error: new Error("Console offline") };
     // No point asking an offline console for anything through the connector.
-    const [wans, clients, flows] = offline ? [gone, gone, gone] : await Promise.all([loadWans(s), loadClients(s), loadFlows(s)]);
+    const [wans, clients, flowsRes] = offline ? [gone, gone, gone] : await Promise.all([loadWans(s), loadClients(s), loadFlows(s)]);
+    const flows = flowsRes.ok ? { ok: true, value: flowsRes.value.hosts } : flowsRes;
+    const local = flowsRes.ok ? flowsRes.value.local : null;
     return {
       id: s.siteId, name: s.meta?.name || s.siteId, host: host ? hostName(host) : "", offline,
       isp: st.ispInfo?.name || "", counts: st.counts || {}, issues: st.internetIssues || [],
       wanUptime: st.percentages?.wanUptime, wan: w,
       health: offline ? "offline" : siteHealth(st), wanStatus: offline ? "offline" : combineWan(wanHealth(st, w), wans),
-      wans, clients, flows,
+      wans, clients, flows, local,
     };
   }));
   if (cfg.ptrLookup) await resolveFlowIps(models);
@@ -484,7 +521,8 @@ function demoModels() {
         { name: "LTE backup", ip: "198.51.100.4", up: true }] },
       clients: { ok: true, value: [["Living-Room-TV", 3e10], ["Desktop", 1.4e10], ["Pixel-9", 6e9], ["NAS", 4e9], ["Laptop", 2e9], ["Doorbell", 3e8]]
         .map(([name, b]) => ({ name, ip: "192.168.1.20", tx_bytes: j(b * 0.88), rx_bytes: j(b * 0.12) })) },
-      flows: { ok: true, value: new Map([["video.example-cdn.net", 12e9], ["api.example.com", 4e9], ["updates.example.org", 2.5e9], ["photos.example.com", 1.8e9], ["chat.example.io", 6e8], ["tiny.example.net", 1e6]].map(([k, v]) => { const t = j(v); return [k, { down: Math.round(t * 0.9), up: Math.round(t * 0.1), total: t, split: true }]; })) } },
+      flows: { ok: true, value: new Map([["video.example-cdn.net", 12e9], ["api.example.com", 4e9], ["updates.example.org", 2.5e9], ["photos.example.com", 1.8e9], ["chat.example.io", 6e8], ["tiny.example.net", 1e6]].map(([k, v]) => { const t = j(v); return [k, { down: Math.round(t * 0.9), up: Math.round(t * 0.1), total: t, split: true }]; })) },
+      local: { bytes: j(2.4e11), flows: 5200, seen: 9000, unknown: 12, partial: false } },
     { id: "b", name: "Cabin", host: "Cloud Gateway Max", isp: "Example Cable", counts: { totalDevice: 4, offlineDevice: 1, wifiClient: 5, wiredClient: 1, criticalNotification: 1 },
       issues: [{}], wanUptime: 97.4, wan: { avgLatency: j(48), packetLoss: 3.1, downtime: 120, uptime: 3480 }, health: "warning", wanStatus: "warning", down: j(1e6), up: j(2e5),
       wans: { ok: false, error: Object.assign(new Error("403 Forbidden (/v1/connector/consoles/…)"), { brief: "403 Forbidden" }) } },
@@ -585,8 +623,17 @@ function render() {
   const topCard = (title, items) => items.length
     ? `<section class="card"><h2 class="cols"><span>${title}</span><span class="c"><span class="d">Down</span><span class="u">Up</span></span></h2>${list(items)}</section>` : "";
 
+  // Local traffic (between devices on the LAN) only exists in the consoles' traffic flows, so the card appears
+  // only when some console returned flows it could classify.
+  const localOn = online.filter((m) => m.local && m.local.seen > m.local.unknown);
+  const localCard = localOn.length ? `
+    <section class="card" title="Between devices on your own networks, estimated from traffic flows. It does not follow the Day / Week / Month switch."><h2>Local traffic</h2>
+      <div class="big">${esc(fmtBytes(localOn.reduce((a, m) => a + m.local.bytes, 0)))} <span class="sub">local</span></div>
+      <div class="note">Last 24 h${localOn.some((m) => m.local.partial) ? " · partial sample" : ""}${localOn.length < online.length ? ` · ${localOn.length} of ${online.length} consoles` : ""}</div>
+    </section>` : "";
+
   main.innerHTML = `
-  <div class="grid3">
+  <div class="grid3${localCard ? " four" : ""}">
     <section class="card"><h2>Overall health</h2>
       <div class="big">${chip(overall)}</div>
       <div class="note">${okSites} of ${M.length} site${M.length === 1 ? "" : "s"} healthy${offlineSites.length ? ` · ${offlineSites.length} offline` : ""}</div>
@@ -596,13 +643,13 @@ function render() {
       <div class="big">${chip(wanStatus)}</div>
       <div class="note">${lat.length ? `Avg latency ${Math.round(avg(lat))} ms` : "No latency data"}${loss.length ? ` · avg packet loss ${avg(loss).toFixed(1)}%` : ""}</div>
     </section>
-    <section class="card"><h2 class="cols"><span>Total traffic</span><span class="seg" role="group" aria-label="Time range">${
+    <section class="card"><h2 class="cols"><span>WAN traffic</span><span class="seg" role="group" aria-label="Time range">${
       Object.entries(RANGES).map(([k, v]) => `<button type="button" data-range="${k}" aria-pressed="${k === state.range}">${v.label}</button>`).join("")}</span></h2>
       <div class="big">${qty(downBytes)} <span class="sub">down</span></div>
       <div class="big" style="font-size:1.4rem">${qty(upBytes)} <span class="sub">up</span></div>
       ${spark([s.map((x) => x.down), s.map((x) => x.up)])}
       <div class="legend"><span class="d">● Download</span><span class="u">● Upload</span><span>Last ${R.word}${esc(partial)}</span></div>
-    </section>
+    </section>${localCard}
   </div>
 
   <section class="card"><h2>Sites</h2>
